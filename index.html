@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BrickBuro Штаб</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- AUTH SCREEN -->
+<div id="auth-screen" class="auth-screen">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <span class="auth-logo-brick">BRICK</span><span class="auth-logo-buro">BURO</span>
+      <div class="auth-logo-sub">ШТАБ</div>
+    </div>
+    <div id="auth-error" class="auth-error hidden"></div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tab-login">Войти</button>
+      <button class="auth-tab" id="tab-register">Регистрация</button>
+    </div>
+    <div class="auth-form">
+      <div class="field-wrap" id="field-name-wrap" style="display:none">
+        <label class="field-label">Ваше имя</label>
+        <input type="text" id="auth-name" class="field-input" placeholder="Мария">
+      </div>
+      <div class="field-wrap">
+        <label class="field-label">Email</label>
+        <input type="email" id="auth-email" class="field-input" placeholder="maria@brickburo.com" autocomplete="email">
+      </div>
+      <div class="field-wrap">
+        <label class="field-label">Пароль</label>
+        <input type="password" id="auth-password" class="field-input" placeholder="••••••••" autocomplete="current-password">
+      </div>
+      <button id="auth-submit" class="btn-primary auth-submit">
+        <span id="auth-btn-text">Войти</span>
+        <span id="auth-btn-spin" class="btn-spinner hidden"></span>
+      </button>
+    </div>
+    <div class="auth-hint">Только для команды BrickBuro</div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app" class="app hidden">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-top">
+      <div class="sidebar-logo">
+        <span class="sl-brick">B</span><span class="sl-buro">B</span>
+      </div>
+      <button class="sidebar-toggle" id="sidebar-toggle" title="Свернуть">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a href="#" class="nav-item active" data-page="today">
+        <span class="nav-icon">◈</span><span class="nav-label">Сегодня</span>
+      </a>
+      <a href="#" class="nav-item" data-page="tasks">
+        <span class="nav-icon">▦</span><span class="nav-label">Задачи</span>
+      </a>
+      <a href="#" class="nav-item" data-page="gantt">
+        <span class="nav-icon">▬</span><span class="nav-label">Гант</span>
+      </a>
+      <a href="#" class="nav-item" data-page="goals">
+        <span class="nav-icon">◎</span><span class="nav-label">Цели</span>
+      </a>
+      <a href="#" class="nav-item" data-page="projects">
+        <span class="nav-icon">▤</span><span class="nav-label">Проекты</span>
+      </a>
+      <a href="#" class="nav-item" data-page="contacts">
+        <span class="nav-icon">◉</span><span class="nav-label">Контакты</span>
+      </a>
+      <div class="nav-divider"></div>
+      <a href="#" class="nav-item" data-page="marketing">
+        <span class="nav-icon">◐</span><span class="nav-label">Маркетинг</span>
+      </a>
+      <a href="#" class="nav-item" data-page="finance">
+        <span class="nav-icon">◫</span><span class="nav-label">Финансы</span>
+      </a>
+      <a href="#" class="nav-item" data-page="knowledge">
+        <span class="nav-icon">◧</span><span class="nav-label">База знаний</span>
+      </a>
+      <div class="nav-divider"></div>
+      <a href="#" class="nav-item" data-page="personal">
+        <span class="nav-icon">◌</span><span class="nav-label">Личное</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-bottom">
+      <div class="user-pill" id="user-pill">
+        <div class="user-avatar" id="user-avatar">М</div>
+        <span class="user-name" id="user-name">Мария</span>
+      </div>
+      <button class="btn-logout" id="btn-logout" title="Выйти">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 2H2v10h3M9 4l3 3-3 3M12 7H5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main" id="main">
+
+    <!-- TODAY PAGE -->
+    <div id="page-today" class="page active">
+      <div class="today-layout">
+
+        <!-- LEFT PANEL -->
+        <div class="today-left">
+          <!-- Mini Calendar -->
+          <div class="mini-cal" id="mini-cal"></div>
+
+          <!-- Date shortcuts -->
+          <div class="date-shortcuts">
+            <button class="ds-btn active" data-filter="today">Сегодня</button>
+            <button class="ds-btn" data-filter="tomorrow">Завтра</button>
+            <button class="ds-btn" data-filter="nodate">Без даты</button>
+          </div>
+
+          <!-- Tags filter -->
+          <div class="tags-panel">
+            <div class="tags-title">Разделы</div>
+            <div class="tags-list" id="tags-list">
+              <button class="tag-btn active" data-section="all">Все</button>
+              <button class="tag-btn" data-section="projects">Проекты</button>
+              <button class="tag-btn" data-section="bureau">Бюро</button>
+              <button class="tag-btn" data-section="marketing">Маркетинг</button>
+              <button class="tag-btn" data-section="finance">Финансы</button>
+              <button class="tag-btn" data-section="partners">Смежники</button>
+              <button class="tag-btn" data-section="growth">Развитие</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT PANEL -->
+        <div class="today-right">
+          <!-- Header -->
+          <div class="today-header">
+            <div class="today-date-big" id="today-date-big"></div>
+            <div class="today-stats" id="today-stats">
+              <!-- заполняется из JS -->
+            </div>
+            <button class="btn-add-task" id="btn-add-task">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+              Задача
+            </button>
+          </div>
+
+          <!-- Task groups -->
+          <div class="task-groups" id="task-groups">
+            <div class="empty-state" id="empty-state">
+              <div class="empty-icon">◈</div>
+              <div class="empty-text">Задач нет. Хороший день.</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- OTHER PAGES (заглушки) -->
+    <div id="page-tasks" class="page"><div class="page-stub"><div class="stub-icon">▦</div><div class="stub-label">Задачи — скоро</div></div></div>
+    <div id="page-gantt" class="page"><div class="page-stub"><div class="stub-icon">▬</div><div class="stub-label">Гант — скоро</div></div></div>
+    <div id="page-goals" class="page"><div class="page-stub"><div class="stub-icon">◎</div><div class="stub-label">Цели — скоро</div></div></div>
+    <div id="page-projects" class="page"><div class="page-stub"><div class="stub-icon">▤</div><div class="stub-label">Проекты — скоро</div></div></div>
+    <div id="page-contacts" class="page"><div class="page-stub"><div class="stub-icon">◉</div><div class="stub-label">Контакты — скоро</div></div></div>
+    <div id="page-marketing" class="page"><div class="page-stub"><div class="stub-icon">◐</div><div class="stub-label">Маркетинг — скоро</div></div></div>
+    <div id="page-finance" class="page"><div class="page-stub"><div class="stub-icon">◫</div><div class="stub-label">Финансы — скоро</div></div></div>
+    <div id="page-knowledge" class="page"><div class="page-stub"><div class="stub-icon">◧</div><div class="stub-label">База знаний — скоро</div></div></div>
+    <div id="page-personal" class="page"><div class="page-stub"><div class="stub-icon">◌</div><div class="stub-label">Личное — скоро</div></div></div>
+
+  </main>
+</div>
+
+<!-- TASK MODAL -->
+<div id="task-modal" class="modal-overlay hidden">
+  <div class="modal" id="task-modal-inner">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-title">Новая задача</div>
+      <div class="modal-meta" id="modal-meta"></div>
+      <button class="modal-close" id="modal-close">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+
+      <!-- Название -->
+      <div class="mf-row">
+        <input type="text" id="f-title" class="f-title-input" placeholder="Название задачи...">
+      </div>
+
+      <!-- Тип + Раздел -->
+      <div class="mf-row mf-2col">
+        <div class="mf-field">
+          <label class="mf-label">Тип</label>
+          <div class="seg-control" id="f-type-seg">
+            <button class="seg-btn active" data-val="task">Задача</button>
+            <button class="seg-btn" data-val="meeting">Встреча</button>
+            <button class="seg-btn" data-val="call">Звонок</button>
+            <button class="seg-btn" data-val="trip">Поездка</button>
+            <button class="seg-btn" data-val="deadline">Дедлайн</button>
+            <button class="seg-btn" data-val="payment">Оплата</button>
+          </div>
+        </div>
+        <div class="mf-field">
+          <label class="mf-label">Раздел</label>
+          <select id="f-section" class="f-select">
+            <option value="projects">🏗 Проекты</option>
+            <option value="bureau" selected>🏢 Бюро</option>
+            <option value="marketing">📣 Маркетинг</option>
+            <option value="finance">💰 Финансы</option>
+            <option value="partners">👥 Смежники</option>
+            <option value="growth">📈 Развитие</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Проект (если раздел = projects) -->
+      <div class="mf-row" id="f-project-row" style="display:none">
+        <div class="mf-field">
+          <label class="mf-label">Проект</label>
+          <select id="f-project" class="f-select">
+            <option value="">— без проекта —</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Кому + Приоритет + Срочность -->
+      <div class="mf-row mf-3col">
+        <div class="mf-field">
+          <label class="mf-label">Кому</label>
+          <select id="f-assignee" class="f-select">
+            <option value="both">Оба</option>
+          </select>
+        </div>
+        <div class="mf-field">
+          <label class="mf-label">Приоритет</label>
+          <div class="prio-seg" id="f-priority">
+            <button class="prio-btn" data-val="1" title="Высокий">1</button>
+            <button class="prio-btn active" data-val="2" title="Средний">2</button>
+            <button class="prio-btn" data-val="3" title="Низкий">3</button>
+          </div>
+        </div>
+        <div class="mf-field">
+          <label class="mf-label">Срочность</label>
+          <div class="prio-seg" id="f-urgency">
+            <button class="prio-btn" data-val="1" title="Срочно">1</button>
+            <button class="prio-btn active" data-val="2" title="Средняя">2</button>
+            <button class="prio-btn" data-val="3" title="Не срочно">3</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Дата + Время -->
+      <div class="mf-row mf-2col">
+        <div class="mf-field">
+          <label class="mf-label">Дата выполнения</label>
+          <input type="date" id="f-date" class="f-input">
+        </div>
+        <div class="mf-field" id="f-time-wrap">
+          <label class="mf-label">Время</label>
+          <div class="time-row">
+            <input type="time" id="f-time-start" class="f-input f-time">
+            <span class="time-dash">—</span>
+            <input type="time" id="f-time-end" class="f-input f-time">
+          </div>
+        </div>
+      </div>
+
+      <!-- Время на дорогу (для встреч/поездок) -->
+      <div class="mf-row" id="f-travel-wrap" style="display:none">
+        <div class="mf-field">
+          <label class="mf-label">Время на дорогу (мин)</label>
+          <input type="number" id="f-travel" class="f-input" placeholder="30" min="0" max="240" step="15">
+        </div>
+      </div>
+
+      <!-- Повторяемость -->
+      <div class="mf-row mf-2col">
+        <div class="mf-field">
+          <label class="mf-label">Повторяемость</label>
+          <select id="f-recurrence" class="f-select">
+            <option value="">Не повторяется</option>
+            <option value="daily">Каждый день</option>
+            <option value="weekly">Каждую неделю</option>
+            <option value="biweekly">Раз в 2 недели</option>
+            <option value="monthly">Каждый месяц</option>
+            <option value="quarterly">Раз в квартал</option>
+            <option value="yearly">Раз в год</option>
+            <option value="custom">Другое (уточнить позже)</option>
+          </select>
+        </div>
+        <div class="mf-field" id="f-recurrence-end-wrap" style="display:none">
+          <label class="mf-label">Повторять до</label>
+          <input type="date" id="f-recurrence-end" class="f-input">
+        </div>
+      </div>
+
+      <!-- Зависит от -->
+      <div class="mf-row">
+        <div class="mf-field">
+          <label class="mf-label">Связь с другой задачей <span class="mf-hint">(зависит от)</span></label>
+          <select id="f-depends" class="f-select">
+            <option value="">— нет зависимости —</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Подзадачи -->
+      <div class="mf-row">
+        <label class="mf-label">Подзадачи / чеклист</label>
+        <div class="subtasks-list" id="subtasks-list"></div>
+        <div class="subtask-add-row">
+          <input type="text" id="subtask-input" class="subtask-input" placeholder="Добавить подзадачу...">
+          <button class="btn-add-subtask" id="btn-add-subtask">+</button>
+        </div>
+      </div>
+
+      <!-- Заметка -->
+      <div class="mf-row">
+        <label class="mf-label">Заметка</label>
+        <textarea id="f-notes" class="f-textarea" placeholder="Дополнительная информация..."></textarea>
+      </div>
+
+      <!-- Личная задача -->
+      <div class="mf-row">
+        <label class="checkbox-row">
+          <input type="checkbox" id="f-personal" class="f-checkbox">
+          <span class="checkbox-label">Личная задача (видна только мне, в общем календаре — «занят»)</span>
+        </label>
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <div class="modal-footer-left">
+        <button class="btn-delete hidden" id="btn-delete">Удалить</button>
+      </div>
+      <div class="modal-footer-right">
+        <button class="btn-secondary" id="btn-cancel">Отмена</button>
+        <button class="btn-primary" id="btn-save">Сохранить</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div id="toast" class="toast hidden"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="app.js"></script>
+</body>
+</html>
