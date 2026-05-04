@@ -62,7 +62,7 @@ let state = {
 };
 
 // ─── INIT ─────────────────────────────────────────────────────
-window.addEventListener('DOMContentLoaded', () => {
+function startApp() {
   try {
     SB = supabase.createClient(SB_URL, SB_KEY, {
     auth: {
@@ -80,172 +80,82 @@ window.addEventListener('DOMContentLoaded', () => {
   initAuth();
   initNav();
   initModal();
-});
+}
 
-// ─── AUTH ──────────────────────────────────────────────────────
-let authMode = 'login'; // 'login' | 'register'
+// Запускаем когда DOM готов
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', startApp);
+} else {
+  startApp();
+}
+
+// ─── AUTH (простой пароль) ───────────────────────────────────────
+const PW_HASH = '9b2db879befc26f80abd606a33cdade35c2bd17759d846e7812a41afd7350bfa'; // brickburo2026
+
+async function sha256(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
 
 function initAuth() {
-  // Проверяем текущую сессию сразу
-  SB.auth.getSession().then(async ({ data: { session } }) => {
-    if (session) {
-      currentUser = session.user;
-      await loadProfile();
-      showApp();
-    }
-  });
-
-  SB.auth.onAuthStateChange(async (event, session) => {
-    if (event === 'SIGNED_IN' && session) {
-      currentUser = session.user;
-      await loadProfile();
-      showApp();
-    } else if (event === 'SIGNED_OUT') {
-      currentUser = null;
-      showAuthScreen();
-    }
-  });
+  // Проверяем сессию
+  if (sessionStorage.getItem('bb-ok') === PW_HASH) {
+    document.getElementById('auth-screen').classList.add('hidden');
+    document.getElementById('app').classList.remove('hidden');
+    // Ставим фиктивного пользователя
+    currentUser = { id: 'maria', email: 'maria@brickburo.com' };
+    currentProfile = { id: 'maria', name: 'Мария', avatar_initials: 'МА', color: '#a84332' };
+    profiles['maria'] = currentProfile;
+    loadDataAndShow();
+    return;
+  }
 
   document.getElementById('auth-submit').addEventListener('click', doAuth);
   document.getElementById('auth-password').addEventListener('keydown', e => {
     if (e.key === 'Enter') doAuth();
   });
-  document.getElementById('btn-logout').addEventListener('click', async () => {
-    await SB.auth.signOut();
+  document.getElementById('btn-logout').addEventListener('click', () => {
+    sessionStorage.removeItem('bb-ok');
+    location.reload();
   });
-
-  // Tabs
-  document.getElementById('tab-login').addEventListener('click', () => setAuthMode('login'));
-  document.getElementById('tab-register').addEventListener('click', () => setAuthMode('register'));
-}
-
-function setAuthMode(mode) {
-  authMode = mode;
-  document.getElementById('tab-login').classList.toggle('active', mode === 'login');
-  document.getElementById('tab-register').classList.toggle('active', mode === 'register');
-  document.getElementById('field-name-wrap').style.display = mode === 'register' ? '' : 'none';
-  document.getElementById('auth-btn-text').textContent = mode === 'login' ? 'Войти' : 'Зарегистрироваться';
-  document.getElementById('auth-error').classList.add('hidden');
 }
 
 async function doAuth() {
-  const email = document.getElementById('auth-email').value.trim();
-  const password = document.getElementById('auth-password').value;
-  const name = document.getElementById('auth-name')?.value.trim();
+  const pw = document.getElementById('auth-password').value;
   const errEl = document.getElementById('auth-error');
   const btnText = document.getElementById('auth-btn-text');
-  const btnSpin = document.getElementById('auth-btn-spin');
   const btn = document.getElementById('auth-submit');
 
-  if (!email || !password) {
-    errEl.textContent = 'Введите email и пароль';
-    errEl.classList.remove('hidden');
-    return;
-  }
-  if (authMode === 'register' && !name) {
-    errEl.textContent = 'Введите ваше имя';
-    errEl.classList.remove('hidden');
-    return;
-  }
+  if (!pw) { errEl.textContent = 'Введите пароль'; errEl.classList.remove('hidden'); return; }
 
   errEl.classList.add('hidden');
-  btnText.textContent = authMode === 'login' ? 'Вхожу...' : 'Регистрирую...';
-  btnSpin.classList.remove('hidden');
+  btnText.textContent = 'Вхожу...';
   btn.disabled = true;
 
-  if (authMode === 'login') {
-    const { error } = await SB.auth.signInWithPassword({ email, password });
-    if (error) {
-      errEl.textContent = 'Неверный email или пароль';
-      errEl.classList.remove('hidden');
-    }
+  const h = await sha256(pw);
+  if (h === PW_HASH) {
+    sessionStorage.setItem('bb-ok', PW_HASH);
+    currentUser = { id: 'maria', email: 'maria@brickburo.com' };
+    currentProfile = { id: 'maria', name: 'Мария', avatar_initials: 'МА', color: '#a84332' };
+    profiles['maria'] = currentProfile;
+    document.getElementById('auth-screen').classList.add('hidden');
+    document.getElementById('app').classList.remove('hidden');
+    loadDataAndShow();
   } else {
-    const { data, error } = await SB.auth.signUp({ email, password });
-    if (error) {
-      errEl.textContent = error.message || 'Ошибка регистрации';
-      errEl.classList.remove('hidden');
-    } else if (data.user) {
-      // Создаём профиль
-      const initials = name ? name.slice(0,2).toUpperCase() : email.slice(0,2).toUpperCase();
-      await SB.from('profiles').upsert({
-        id: data.user.id,
-        name: name || email.split('@')[0],
-        avatar_initials: initials,
-        color: '#a84332',
-      });
-      // Сразу входим
-      const { error: signInError } = await SB.auth.signInWithPassword({ email, password });
-      if (signInError) {
-        showToast('Аккаунт создан. Войдите через форму входа.', 'success');
-        setAuthMode('login');
-      }
-    }
+    errEl.textContent = 'Неверный пароль';
+    errEl.classList.remove('hidden');
+    btnText.textContent = 'Войти';
+    btn.disabled = false;
   }
-
-  btnText.textContent = authMode === 'login' ? 'Войти' : 'Зарегистрироваться';
-  btnSpin.classList.add('hidden');
-  btn.disabled = false;
 }
 
-async function loadProfile() {
-  // Загружаем свой профиль
-  const { data } = await SB.from('profiles').select('*').eq('id', currentUser.id).single();
-  if (data) {
-    currentProfile = data;
-  } else {
-    // Создаём профиль если нет
-    const initials = (currentUser.email || 'U').charAt(0).toUpperCase();
-    const name = currentUser.email.split('@')[0];
-    const { data: created } = await SB.from('profiles').insert({
-      id: currentUser.id,
-      name: name.charAt(0).toUpperCase() + name.slice(1),
-      avatar_initials: initials,
-    }).select().single();
-    currentProfile = created;
-  }
-
-  // Загружаем все профили для отображения аватаров
-  const { data: allProfiles } = await SB.from('profiles').select('*');
-  if (allProfiles) {
-    allProfiles.forEach(p => { profiles[p.id] = p; });
-  }
-
-  // Обновляем UI
-  document.getElementById('user-avatar').textContent = currentProfile?.avatar_initials || '?';
-  document.getElementById('user-name').textContent = currentProfile?.name || 'Пользователь';
-}
-
-function showAuthScreen() {
-  document.getElementById('auth-screen').classList.remove('hidden');
-  document.getElementById('app').classList.add('hidden');
-}
-
-async function showApp() {
-  document.getElementById('auth-screen').classList.add('hidden');
-  document.getElementById('app').classList.remove('hidden');
+async function loadDataAndShow() {
   await Promise.all([loadTasks(), loadProjects()]);
   initCalendar();
   renderTodayHeader();
   renderTasks();
-}
-
-// ─── NAV ──────────────────────────────────────────────────────
-function initNav() {
-  document.querySelectorAll('.nav-item').forEach(item => {
-    item.addEventListener('click', e => {
-      e.preventDefault();
-      const page = item.dataset.page;
-      document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-      item.classList.add('active');
-      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-      document.getElementById('page-' + page)?.classList.add('active');
-      if (page === 'tasks') renderTasksPage();
-    });
-  });
-
-  document.getElementById('sidebar-toggle').addEventListener('click', () => {
-    document.getElementById('sidebar').classList.toggle('collapsed');
-  });
+  document.getElementById('user-avatar').textContent = currentProfile.avatar_initials;
+  document.getElementById('user-name').textContent = currentProfile.name;
 }
 
 // ─── LOAD DATA ────────────────────────────────────────────────
