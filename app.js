@@ -64,7 +64,16 @@ let state = {
 // ─── INIT ─────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
   try {
-    SB = supabase.createClient(SB_URL, SB_KEY);
+    SB = supabase.createClient(SB_URL, SB_KEY, {
+    auth: {
+      storage: window.localStorage,
+      storageKey: 'bb-auth',
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: false,
+      lock: async (name, acquireTimeout, fn) => fn(),
+    }
+  });
   } catch (e) {
     showToast('Ошибка подключения к базе данных', 'error');
   }
