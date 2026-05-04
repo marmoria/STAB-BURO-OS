@@ -714,6 +714,7 @@ const KANBAN_COLS = [
 function renderTasksPage() {
   const page = document.getElementById('page-tasks');
   if (!page || !page.classList.contains('active')) return;
+  try {
 
   const tasks = getTasksFiltered();
   const total = state.tasks.filter(t => !t.is_personal || t.created_by === currentUser?.id).length;
@@ -746,9 +747,9 @@ function renderTasksPage() {
       </select>
       <select class="tp-sel" id="tp-person">
         <option value="all">Все люди</option>
-        ${Object.values(profiles).map(p =>
+        ${profiles ? Object.values(profiles).map(p =>
           `<option value="${p.id}" ${tasksState.person===p.id?'selected':''}>${p.name}</option>`
-        ).join('')}
+        ).join('') : ''}
       </select>
       <select class="tp-sel" id="tp-prio">
         <option value="all">Все приоритеты</option>
@@ -817,6 +818,10 @@ function renderTasksPage() {
   p.querySelectorAll('.task-check.kb-check').forEach(el => {
     el.addEventListener('click', e => { e.stopPropagation(); toggleTask(parseInt(el.dataset.id)); });
   });
+  } catch(err) {
+    console.error('renderTasksPage error:', err);
+    page.innerHTML = `<div class="page-stub"><div class="stub-icon">!</div><div class="stub-label">Ошибка: ${err.message}</div></div>`;
+  }
 }
 
 function getTasksFiltered() {
@@ -869,7 +874,7 @@ function buildTaskListRow(t) {
   const pct = subs.length ? Math.round(subDone/subs.length*100) : null;
   const isDone = t.status === 'done';
   const over = t.date_due && t.date_due < todayStr() && !isDone;
-  const pc = profiles[t.created_by];
+  const pc = profiles && profiles[t.created_by] ? profiles[t.created_by] : null;
   const SCOLOR = {
     projects:'var(--c-projects)', bureau:'var(--c-bureau)', marketing:'var(--c-marketing)',
     finance:'var(--c-finance)', partners:'var(--c-partners)', growth:'var(--c-growth)'
@@ -919,7 +924,7 @@ function buildTasksKanban(tasks) {
         <div class="kb-col-body" data-col="${col.id}">
           ${items.map(t => {
             const secColor = SCOLOR[t.section] || 'var(--ink3)';
-            const pc = profiles[t.created_by];
+            const pc = profiles && profiles[t.created_by] ? profiles[t.created_by] : null;
             const isDone = t.status === 'done';
             const over = t.date_due && t.date_due < todayStr() && !isDone;
             return `<div class="kb-card ${isDone?'done':''}" draggable="true" data-id="${t.id}">
