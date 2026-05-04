@@ -71,6 +71,7 @@ window.addEventListener('DOMContentLoaded', () => {
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: false,
+      lock: (name, acquireTimeout, fn) => fn(),
     }
   });
   } catch (e) {
