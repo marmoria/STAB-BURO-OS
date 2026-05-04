@@ -67,11 +67,10 @@ window.addEventListener('DOMContentLoaded', () => {
     SB = supabase.createClient(SB_URL, SB_KEY, {
     auth: {
       storage: window.localStorage,
-      storageKey: 'bb-auth',
+      storageKey: 'bb-shtab-auth',
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: false,
-      lock: async (name, acquireTimeout, fn) => fn(),
     }
   });
   } catch (e) {
@@ -86,12 +85,21 @@ window.addEventListener('DOMContentLoaded', () => {
 let authMode = 'login'; // 'login' | 'register'
 
 function initAuth() {
-  SB.auth.onAuthStateChange(async (event, session) => {
+  // Проверяем текущую сессию сразу
+  SB.auth.getSession().then(async ({ data: { session } }) => {
     if (session) {
       currentUser = session.user;
       await loadProfile();
       showApp();
-    } else {
+    }
+  });
+
+  SB.auth.onAuthStateChange(async (event, session) => {
+    if (event === 'SIGNED_IN' && session) {
+      currentUser = session.user;
+      await loadProfile();
+      showApp();
+    } else if (event === 'SIGNED_OUT') {
       currentUser = null;
       showAuthScreen();
     }
@@ -164,8 +172,12 @@ async function doAuth() {
         avatar_initials: initials,
         color: '#a84332',
       });
-      showToast('Аккаунт создан. Проверьте email для подтверждения.', 'success');
-      setAuthMode('login');
+      // Сразу входим
+      const { error: signInError } = await SB.auth.signInWithPassword({ email, password });
+      if (signInError) {
+        showToast('Аккаунт создан. Войдите через форму входа.', 'success');
+        setAuthMode('login');
+      }
     }
   }
 
@@ -226,6 +238,7 @@ function initNav() {
       item.classList.add('active');
       document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
       document.getElementById('page-' + page)?.classList.add('active');
+      if (page === 'tasks') renderTasksPage();
     });
   });
 
@@ -238,9 +251,14 @@ function initNav() {
 async function loadTasks() {
   const { data, error } = await SB.from('bb_tasks')
     .select('*')
-    .order('date_due', { ascending: true, nullsFirst: false });
+    .order('created_at', { ascending: false });
 
-  if (error) { showToast('Ошибка загрузки задач', 'error'); return; }
+  if (error) {
+    console.error('loadTasks error:', JSON.stringify(error));
+    showToast('Ошибка загрузки: ' + (error.message || error.code), 'error');
+    state.tasks = [];
+    return;
+  }
   state.tasks = data || [];
 
   // Загружаем подзадачи
@@ -674,6 +692,256 @@ async function toggleSubtask(subId, taskId) {
   renderTasks();
 }
 
+
+
+// ─── TASKS PAGE ───────────────────────────────────────────────
+let tasksState = {
+  view: 'list',      // 'list' | 'kanban'
+  section: 'all',
+  person: 'all',
+  prio: 'all',
+  status: 'active',  // 'active' | 'done' | 'all'
+  search: '',
+};
+
+const KANBAN_COLS = [
+  { id: 'incoming', label: 'ВХОДЯЩИЕ',     color: 'var(--ochre)' },
+  { id: 'active',   label: 'В РАБОТЕ',     color: 'var(--blue)' },
+  { id: 'review',   label: 'НА ПРОВЕРКЕ',  color: 'var(--plum)' },
+  { id: 'done',     label: 'ВЫПОЛНЕНО',    color: 'var(--green)' },
+];
+
+function renderTasksPage() {
+  const page = document.getElementById('page-tasks');
+  if (!page || !page.classList.contains('active')) return;
+
+  const tasks = getTasksFiltered();
+  const total = state.tasks.filter(t => !t.is_personal || t.created_by === currentUser?.id).length;
+  const active = state.tasks.filter(t => t.status === 'active' && (!t.is_personal || t.created_by === currentUser?.id)).length;
+
+  page.innerHTML = `
+    <div class="tp-header">
+      <div class="tp-title">ЗАДАЧИ</div>
+      <div class="tp-stats">
+        <span>${active} активных</span>
+        <span style="color:var(--ink4)">/ ${total} всего</span>
+      </div>
+      <div class="tp-view-toggle">
+        <button class="tv-btn ${tasksState.view==='list'?'active':''}" data-tview="list">СПИСОК</button>
+        <button class="tv-btn ${tasksState.view==='kanban'?'active':''}" data-tview="kanban">КАНБАН</button>
+      </div>
+      <button class="btn-add-task" id="btn-add-task-2">+ ЗАДАЧА</button>
+    </div>
+
+    <div class="tp-filters">
+      <input type="text" class="tp-search" id="tp-search" placeholder="Поиск..." value="${tasksState.search}">
+      <select class="tp-sel" id="tp-section">
+        <option value="all">Все разделы</option>
+        <option value="projects" ${tasksState.section==='projects'?'selected':''}>🏗 Проекты</option>
+        <option value="bureau" ${tasksState.section==='bureau'?'selected':''}>🏢 Бюро</option>
+        <option value="marketing" ${tasksState.section==='marketing'?'selected':''}>📣 Маркетинг</option>
+        <option value="finance" ${tasksState.section==='finance'?'selected':''}>💰 Финансы</option>
+        <option value="partners" ${tasksState.section==='partners'?'selected':''}>👥 Смежники</option>
+        <option value="growth" ${tasksState.section==='growth'?'selected':''}>📈 Развитие</option>
+      </select>
+      <select class="tp-sel" id="tp-person">
+        <option value="all">Все люди</option>
+        ${Object.values(profiles).map(p =>
+          `<option value="${p.id}" ${tasksState.person===p.id?'selected':''}>${p.name}</option>`
+        ).join('')}
+      </select>
+      <select class="tp-sel" id="tp-prio">
+        <option value="all">Все приоритеты</option>
+        <option value="1" ${tasksState.prio==='1'?'selected':''}>Приоритет 1</option>
+        <option value="2" ${tasksState.prio==='2'?'selected':''}>Приоритет 2</option>
+        <option value="3" ${tasksState.prio==='3'?'selected':''}>Приоритет 3</option>
+      </select>
+      <div class="tp-status-toggle">
+        <button class="ts-btn ${tasksState.status==='active'?'active':''}" data-tstatus="active">АКТИВНЫЕ</button>
+        <button class="ts-btn ${tasksState.status==='done'?'active':''}" data-tstatus="done">ВЫПОЛНЕННЫЕ</button>
+        <button class="ts-btn ${tasksState.status==='all'?'active':''}" data-tstatus="all">ВСЕ</button>
+      </div>
+    </div>
+
+    <div class="tp-content" id="tp-content">
+      ${tasksState.view === 'list' ? buildTasksList(tasks) : buildTasksKanban(tasks)}
+    </div>
+  `;
+
+  // Events
+  const p = page;
+  p.querySelector('#btn-add-task-2')?.addEventListener('click', () => openTaskModal(null));
+  p.querySelector('#tp-search')?.addEventListener('input', e => { tasksState.search = e.target.value; renderTasksPage(); });
+  p.querySelector('#tp-section')?.addEventListener('change', e => { tasksState.section = e.target.value; renderTasksPage(); });
+  p.querySelector('#tp-person')?.addEventListener('change', e => { tasksState.person = e.target.value; renderTasksPage(); });
+  p.querySelector('#tp-prio')?.addEventListener('change', e => { tasksState.prio = e.target.value; renderTasksPage(); });
+  p.querySelectorAll('[data-tview]').forEach(btn => {
+    btn.addEventListener('click', () => { tasksState.view = btn.dataset.tview; renderTasksPage(); });
+  });
+  p.querySelectorAll('[data-tstatus]').forEach(btn => {
+    btn.addEventListener('click', () => { tasksState.status = btn.dataset.tstatus; renderTasksPage(); });
+  });
+  p.querySelectorAll('[data-tid]').forEach(el => {
+    el.addEventListener('click', e => {
+      if (e.target.closest('.task-check') || e.target.closest('.subtask-check')) return;
+      openTaskModal(parseInt(el.dataset.tid));
+    });
+  });
+  p.querySelectorAll('.task-check[data-id]').forEach(el => {
+    el.addEventListener('click', e => { e.stopPropagation(); toggleTask(parseInt(el.dataset.id)); });
+  });
+  // Kanban drag
+  p.querySelectorAll('.kb-col-body').forEach(col => {
+    col.addEventListener('dragover', e => { e.preventDefault(); col.classList.add('kb-drag-over'); });
+    col.addEventListener('dragleave', () => col.classList.remove('kb-drag-over'));
+    col.addEventListener('drop', e => {
+      e.preventDefault(); col.classList.remove('kb-drag-over');
+      const id = parseInt(e.dataTransfer.getData('taskId'));
+      const newStatus = col.dataset.col;
+      const task = state.tasks.find(t => t.id === id);
+      if (task) {
+        task.status = newStatus === 'done' ? 'done' : 'active';
+        task.kanban_col = newStatus;
+        SB.from('bb_tasks').update({ status: task.status, kanban_col: newStatus, updated_by: currentUser.id }).eq('id', id).then(() => {});
+        renderTasksPage();
+      }
+    });
+  });
+  p.querySelectorAll('.kb-card').forEach(card => {
+    card.addEventListener('dragstart', e => { e.dataTransfer.setData('taskId', card.dataset.id); });
+    card.addEventListener('click', e => {
+      if (e.target.closest('.task-check')) return;
+      openTaskModal(parseInt(card.dataset.id));
+    });
+  });
+  p.querySelectorAll('.task-check.kb-check').forEach(el => {
+    el.addEventListener('click', e => { e.stopPropagation(); toggleTask(parseInt(el.dataset.id)); });
+  });
+}
+
+function getTasksFiltered() {
+  let tasks = state.tasks.filter(t => !t.is_personal || t.created_by === currentUser?.id);
+  if (tasksState.status === 'active') tasks = tasks.filter(t => t.status === 'active');
+  else if (tasksState.status === 'done') tasks = tasks.filter(t => t.status === 'done');
+  if (tasksState.section !== 'all') tasks = tasks.filter(t => t.section === tasksState.section);
+  if (tasksState.person !== 'all') tasks = tasks.filter(t => t.assigned_to === tasksState.person || t.created_by === tasksState.person);
+  if (tasksState.prio !== 'all') tasks = tasks.filter(t => String(t.priority) === tasksState.prio);
+  if (tasksState.search) {
+    const q = tasksState.search.toLowerCase();
+    tasks = tasks.filter(t => t.title?.toLowerCase().includes(q) || t.notes?.toLowerCase().includes(q));
+  }
+  return tasks;
+}
+
+function buildTasksList(tasks) {
+  if (!tasks.length) return `<div class="empty-state"><div class="empty-icon">▦</div><div class="empty-text">Нет задач</div></div>`;
+
+  // Группируем по разделу
+  const sections = {
+    projects: [], bureau: [], marketing: [], finance: [], partners: [], growth: [], other: []
+  };
+  const SLABELS = {
+    projects:'🏗 ПРОЕКТЫ', bureau:'🏢 БЮРО', marketing:'📣 МАРКЕТИНГ',
+    finance:'💰 ФИНАНСЫ', partners:'👥 СМЕЖНИКИ', growth:'📈 РАЗВИТИЕ', other:'ПРОЧЕЕ'
+  };
+  tasks.forEach(t => {
+    if (sections[t.section] !== undefined) sections[t.section].push(t);
+    else sections.other.push(t);
+  });
+
+  let html = '<div class="tl-list">';
+  Object.entries(sections).forEach(([sec, items]) => {
+    if (!items.length) return;
+    // Сортируем: сначала приоритет 1, потом 2, потом 3
+    items.sort((a,b) => (a.priority||3) - (b.priority||3));
+    html += `<div class="tl-group">
+      <div class="tl-group-title">${SLABELS[sec] || sec} <span class="tl-count">${items.length}</span></div>
+      ${items.map(t => buildTaskListRow(t)).join('')}
+    </div>`;
+  });
+  html += '</div>';
+  return html;
+}
+
+function buildTaskListRow(t) {
+  const subs = state.subtasks[t.id] || [];
+  const subDone = subs.filter(s => s.done).length;
+  const pct = subs.length ? Math.round(subDone/subs.length*100) : null;
+  const isDone = t.status === 'done';
+  const over = t.date_due && t.date_due < todayStr() && !isDone;
+  const pc = profiles[t.created_by];
+  const SCOLOR = {
+    projects:'var(--c-projects)', bureau:'var(--c-bureau)', marketing:'var(--c-marketing)',
+    finance:'var(--c-finance)', partners:'var(--c-partners)', growth:'var(--c-growth)'
+  };
+  const secColor = SCOLOR[t.section] || 'var(--ink3)';
+  const prioDots = [1,2,3].map(i => `<div class="prio-dot ${i<=(t.priority||2)?'filled':''}"></div>`).join('');
+
+  return `<div class="tl-row ${isDone?'done':''} ${over?'overdue':''}" data-tid="${t.id}">
+    <div class="task-check ${isDone?'checked':''}" data-id="${t.id}">${isDone?'✓':''}</div>
+    <div class="tl-bar" style="background:${secColor}"></div>
+    <div class="tl-body">
+      <div class="tl-title">${escHtml(t.title)}</div>
+      ${t.notes ? `<div class="tl-notes">${escHtml(t.notes.slice(0,80))}${t.notes.length>80?'…':''}</div>` : ''}
+      ${pct !== null ? `<div class="tl-progress"><div class="tl-progress-fill" style="width:${pct}%"></div><span class="tl-pct">${pct}%</span></div>` : ''}
+    </div>
+    <div class="tl-meta">
+      <div class="prio-dots">${prioDots}</div>
+      ${pc ? `<div class="task-avatar" style="background:${pc.color||'var(--brick)'}22;color:${pc.color||'var(--brick)'};width:18px;height:18px;font-size:8px">${pc.avatar_initials||'?'}</div>` : ''}
+      ${t.date_due ? `<span class="tl-date ${over?'over':''}">${over?'⚠ ':''}${fmtDateShort(t.date_due)}</span>` : ''}
+    </div>
+  </div>`;
+}
+
+function buildTasksKanban(tasks) {
+  const SCOLOR = {
+    projects:'var(--c-projects)', bureau:'var(--c-bureau)', marketing:'var(--c-marketing)',
+    finance:'var(--c-finance)', partners:'var(--c-partners)', growth:'var(--c-growth)'
+  };
+
+  // Канбан по статусу
+  const colMap = {
+    incoming: tasks.filter(t => t.type === 'incoming'),
+    active: tasks.filter(t => t.status === 'active' && t.type !== 'incoming' && !(t.kanban_col === 'review')),
+    review: tasks.filter(t => t.kanban_col === 'review'),
+    done: tasks.filter(t => t.status === 'done'),
+  };
+
+  return `<div class="kb-board">
+    ${KANBAN_COLS.map(col => {
+      const items = colMap[col.id] || [];
+      return `<div class="kb-col">
+        <div class="kb-col-header">
+          <div class="kb-col-dot" style="background:${col.color}"></div>
+          <span class="kb-col-title">${col.label}</span>
+          <span class="kb-col-cnt">${items.length}</span>
+        </div>
+        <div class="kb-col-body" data-col="${col.id}">
+          ${items.map(t => {
+            const secColor = SCOLOR[t.section] || 'var(--ink3)';
+            const pc = profiles[t.created_by];
+            const isDone = t.status === 'done';
+            const over = t.date_due && t.date_due < todayStr() && !isDone;
+            return `<div class="kb-card ${isDone?'done':''}" draggable="true" data-id="${t.id}">
+              <div class="kb-card-bar" style="background:${secColor}"></div>
+              <div class="kb-card-body">
+                <div class="task-check kb-check ${isDone?'checked':''}" data-id="${t.id}">${isDone?'✓':''}</div>
+                <div class="kb-card-title ${isDone?'done':''}">${escHtml(t.title)}</div>
+              </div>
+              <div class="kb-card-footer">
+                ${pc ? `<div class="task-avatar" style="background:${pc.color||'var(--brick)'}22;color:${pc.color||'var(--brick)'};width:16px;height:16px;font-size:7px">${pc.avatar_initials||'?'}</div>` : ''}
+                ${t.date_due ? `<span class="tl-date ${over?'over':''}" style="font-size:9px">${fmtDateShort(t.date_due)}</span>` : ''}
+                <div class="prio-dots" style="margin-left:auto">${[1,2,3].map(i=>`<div class="prio-dot" style="width:5px;height:5px;${i<=(t.priority||2)?'background:var(--ink)':''}"></div>`).join('')}</div>
+              </div>
+            </div>`;
+          }).join('')}
+          ${!items.length ? `<div class="kb-empty">пусто</div>` : ''}
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
 // ─── MODAL ────────────────────────────────────────────────────
 function initModal() {
   document.getElementById('btn-add-task').addEventListener('click', () => openTaskModal(null));
@@ -872,21 +1140,28 @@ async function saveTask() {
   const priority = parseInt(document.querySelector('#f-priority .prio-btn.active')?.dataset.val || '2');
   const urgency = parseInt(document.querySelector('#f-urgency .prio-btn.active')?.dataset.val || '2');
 
+  const _proj = document.getElementById('f-project').value;
+  const _assign = document.getElementById('f-assignee').value;
+  const _dep = document.getElementById('f-depends').value;
+  const _rec = document.getElementById('f-recurrence').value;
+  const _recEnd = document.getElementById('f-recurrence-end').value;
+  const _travel = parseInt(document.getElementById('f-travel').value);
+
   const taskData = {
     title,
     type,
     section,
-    project_id: document.getElementById('f-project').value || null,
-    assigned_to: document.getElementById('f-assignee').value || null,
+    project_id: _proj ? parseInt(_proj) : null,
+    assigned_to: _assign || null,
     priority,
     urgency,
     date_due: document.getElementById('f-date').value || null,
     time_start: document.getElementById('f-time-start').value || null,
     time_end: document.getElementById('f-time-end').value || null,
-    travel_time: parseInt(document.getElementById('f-travel').value) || 0,
-    recurrence: document.getElementById('f-recurrence').value || null,
-    recurrence_end: document.getElementById('f-recurrence-end').value || null,
-    depends_on: document.getElementById('f-depends').value || null,
+    travel_time: isNaN(_travel) ? 0 : _travel,
+    recurrence: _rec || null,
+    recurrence_end: _recEnd || null,
+    depends_on: _dep ? parseInt(_dep) : null,
     notes: document.getElementById('f-notes').value || null,
     is_personal: document.getElementById('f-personal').checked,
     updated_by: currentUser.id,
@@ -898,7 +1173,12 @@ async function saveTask() {
 
   if (taskId) {
     const { error } = await SB.from('bb_tasks').update(taskData).eq('id', taskId);
-    if (error) { showToast('Ошибка сохранения', 'error'); document.getElementById('btn-save').disabled = false; return; }
+    if (error) {
+      console.error('Ошибка обновления:', error);
+      showToast('Ошибка: ' + (error.message || error.code), 'error');
+      document.getElementById('btn-save').disabled = false;
+      return;
+    }
     const idx = state.tasks.findIndex(t => t.id === taskId);
     if (idx >= 0) Object.assign(state.tasks[idx], taskData);
   } else {
@@ -907,7 +1187,12 @@ async function saveTask() {
       created_by: currentUser.id,
       status: 'active',
     }).select().single();
-    if (error) { showToast('Ошибка создания задачи', 'error'); document.getElementById('btn-save').disabled = false; return; }
+    if (error) {
+      console.error('Ошибка создания:', JSON.stringify(error));
+      showToast('Ошибка: ' + (error.message || error.code || 'неизвестно'), 'error');
+      document.getElementById('btn-save').disabled = false;
+      return;
+    }
     taskId = data.id;
     state.tasks.push(data);
   }
