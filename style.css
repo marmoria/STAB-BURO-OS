@@ -1418,6 +1418,19 @@ html, body {
 .tl-quarter {
   position: absolute;
   width: 100%;
+  display: flex;
+  align-items: flex-start;
+}
+.tl-half-label {
+  font-size: 8px;
+  color: var(--ink4);
+  letter-spacing: .03em;
+  padding-right: 6px;
+  line-height: 1;
+  margin-top: -1px;
+  width: 100%;
+  text-align: right;
+  opacity: .7;
 }
 .tl-quarter-line {
   position: absolute;
@@ -1430,7 +1443,7 @@ html, body {
 }
 .tl-quarter-line.tl-half {
   width: 5px;
-  opacity: .3;
+  opacity: .35;
 }
 .tl-now {
   position: absolute;
@@ -1459,13 +1472,13 @@ html, body {
   flex: 1;
   position: relative;
   border-left: none;
-  /* горизонтальные линии часов */
+  /* горизонтальные линии каждые 60px (1час = 60мин * 1px) */
   background-image: repeating-linear-gradient(
     to bottom,
     transparent 0px,
-    transparent 119px,
-    var(--ink-faint) 119px,
-    var(--ink-faint) 120px
+    transparent 59px,
+    var(--ink-faint) 59px,
+    var(--ink-faint) 60px
   );
 }
 
