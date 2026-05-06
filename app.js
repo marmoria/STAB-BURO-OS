@@ -121,7 +121,7 @@ async function doAuth() {
 
 // ─── LOAD DATA ────────────────────────────────────────────────
 async function loadDataAndShow() {
-  await Promise.all([loadTasks(), loadProjects()]);
+  await Promise.all([loadTasks(), loadProjects(), loadGoals()]);
   const av = document.getElementById('user-avatar');
   const un = document.getElementById('user-name');
   if(av) av.textContent = currentProfile.avatar_initials;
@@ -147,8 +147,20 @@ async function loadTasks() {
 }
 
 async function loadProjects() {
-  const { data } = await SB.from('projects').select('id,name,color').order('name');
+  const { data } = await SB.from('projects').select('id,name,color,stage,start_date,end_date,budget,area,notes,client,type').order('name');
   state.projects = data || [];
+}
+
+async function loadGoals() {
+  const { data, error } = await SB.from('bb_goals').select('*').order('created_at', {ascending:false});
+  if(error) { console.error('loadGoals:', error); state.goals=[]; return; }
+  state.goals = data || [];
+  // Загружаем подзадачи целей
+  const ids = state.goals.map(g=>g.id);
+  if(ids.length) {
+    const { data: subs } = await SB.from('bb_subtasks').select('*').in('task_id', ids).order('order_num');
+    if(subs) subs.forEach(s=>{ if(!state.subtasks[s.task_id]) state.subtasks[s.task_id]=[]; state.subtasks[s.task_id].push(s); });
+  }
 }
 
 // ─── NAV ──────────────────────────────────────────────────────
@@ -163,6 +175,9 @@ function initNav() {
       const pg = document.getElementById('page-'+page);
       if(pg) pg.classList.add('active');
       if(page==='tasks') renderTasksPage();
+      if(page==='gantt') renderGanttPage();
+      if(page==='goals') renderGoalsPage();
+      if(page==='projects') renderProjectsPage();
       if(page==='today') { renderTodayHeader(); renderTasks(); }
     });
   });
@@ -563,6 +578,833 @@ async function toggleSubtask(subId, taskId) {
   if(task) { if(allDone){task.status='done';await SB.from('bb_tasks').update({status:'done'}).eq('id',taskId);} else if(task.status==='done'){task.status='active';await SB.from('bb_tasks').update({status:'active'}).eq('id',taskId);} }
   renderTasks();
 }
+
+
+
+// ─── PROJECTS PAGE ────────────────────────────────────────────
+const DESIGN_STAGES = [
+  {id:'brief',      label:'Бриф',          color:'var(--ink3)'},
+  {id:'concept',    label:'Концепция',     color:'var(--c-projects)'},
+  {id:'approval',   label:'Согласование',  color:'var(--ochre)'},
+  {id:'docs',       label:'Документация',  color:'var(--blue)'},
+  {id:'supervision',label:'Надзор',        color:'var(--green)'},
+  {id:'done',       label:'Сдан',          color:'var(--ink4)'},
+];
+
+let projectsState = {
+  view: 'board',    // 'board' | 'list'
+  selectedId: null, // открытый проект
+  editingProject: null,
+};
+
+function renderProjectsPage() {
+  const page = document.getElementById('page-projects');
+  if(!page || !page.classList.contains('active')) return;
+  try {
+    if(projectsState.selectedId) {
+      renderProjectDetail(page);
+    } else {
+      renderProjectsList(page);
+    }
+  } catch(err) {
+    console.error('renderProjectsPage:', err);
+    page.innerHTML = `<div class="page-stub"><div class="stub-icon">!</div><div class="stub-label">Ошибка: ${err.message}</div></div>`;
+  }
+}
+
+function renderProjectsList(page) {
+  const projects = state.projects;
+  page.innerHTML = `
+    <div class="tp-header">
+      <div class="tp-title">ПРОЕКТЫ</div>
+      <div class="tp-stats"><span>${projects.length} проектов</span></div>
+      <button class="btn-add-task" id="btn-add-proj">+ ПРОЕКТ</button>
+    </div>
+    <div class="proj-list-wrap">
+      ${projects.length ? projects.map(p => buildProjectCard(p)).join('') :
+        `<div class="empty-state"><div class="empty-icon">▤</div><div class="empty-text">Нет проектов. Добавьте первый.</div></div>`}
+    </div>
+    ${buildProjectModal()}
+  `;
+
+  page.querySelector('#btn-add-proj')?.addEventListener('click', () => {
+    projectsState.editingProject = {};
+    renderProjectsPage();
+  });
+  page.querySelectorAll('[data-proj-id]').forEach(el => {
+    el.addEventListener('click', e => {
+      if(e.target.closest('.proj-edit-btn')) return;
+      projectsState.selectedId = parseInt(el.dataset.projId);
+      renderProjectsPage();
+    });
+  });
+  page.querySelectorAll('.proj-edit-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const p = state.projects.find(x => x.id === parseInt(btn.dataset.editProj));
+      projectsState.editingProject = p ? {...p} : {};
+      renderProjectsPage();
+    });
+  });
+  bindProjectModal(page);
+}
+
+function buildProjectCard(p) {
+  const tasks = state.tasks.filter(t => t.project_id === p.id);
+  const done = tasks.filter(t => t.status === 'done').length;
+  const pct = tasks.length ? Math.round(done/tasks.length*100) : 0;
+  const stage = p.stage || 'brief';
+  const stageLabel = DESIGN_STAGES.find(s=>s.id===stage)?.label || stage;
+  const stageColor = DESIGN_STAGES.find(s=>s.id===stage)?.color || 'var(--ink3)';
+  const over = p.end_date && p.end_date < todayStr();
+
+  return `<div class="proj-card" data-proj-id="${p.id}">
+    <div class="proj-card-accent" style="background:${p.color||'var(--brick)'}"></div>
+    <div class="proj-card-body">
+      <div class="proj-card-header">
+        <div class="proj-card-name">${escHtml(p.name)}</div>
+        <button class="proj-edit-btn" data-edit-proj="${p.id}">···</button>
+      </div>
+      ${p.client ? `<div class="proj-card-client">${escHtml(p.client)}</div>` : ''}
+      <div class="proj-card-meta">
+        <span class="proj-stage-badge" style="color:${stageColor};border-color:${stageColor}22;background:${stageColor}10">${stageLabel}</span>
+        ${p.end_date ? `<span class="proj-date ${over?'over':''}">${over?'⚠ ':''}до ${fmtDateShort(p.end_date)}</span>` : ''}
+        ${p.area ? `<span class="proj-area">${p.area} м²</span>` : ''}
+      </div>
+      ${tasks.length ? `
+        <div class="proj-progress-row">
+          <div class="proj-progress-bar"><div class="proj-progress-fill" style="width:${pct}%;background:${p.color||'var(--brick)'}"></div></div>
+          <span class="proj-pct">${done}/${tasks.length}</span>
+        </div>` : ''}
+    </div>
+  </div>`;
+}
+
+function renderProjectDetail(page) {
+  const p = state.projects.find(x => x.id === projectsState.selectedId);
+  if(!p) { projectsState.selectedId = null; renderProjectsPage(); return; }
+
+  const tasks = state.tasks.filter(t => t.project_id === p.id);
+  const done = tasks.filter(t => t.status === 'done').length;
+  const pct = tasks.length ? Math.round(done/tasks.length*100) : 0;
+
+  page.innerHTML = `
+    <div class="tp-header">
+      <button class="btn-secondary" id="proj-back">← Проекты</button>
+      <div class="proj-detail-name" style="color:${p.color||'var(--brick)'}">${escHtml(p.name)}</div>
+      ${p.client ? `<div class="tp-stats"><span>${escHtml(p.client)}</span></div>` : ''}
+      <button class="btn-add-task" id="btn-add-proj-task">+ ЗАДАЧА</button>
+    </div>
+
+    <div class="proj-detail-meta">
+      ${p.end_date ? `<div class="proj-meta-item"><div class="proj-meta-label">Дедлайн</div><div>${fmtDateShort(p.end_date)}</div></div>` : ''}
+      ${p.area ? `<div class="proj-meta-item"><div class="proj-meta-label">Площадь</div><div>${p.area} м²</div></div>` : ''}
+      ${p.budget ? `<div class="proj-meta-item"><div class="proj-meta-label">Бюджет</div><div>${Number(p.budget).toLocaleString('ru')} ₽</div></div>` : ''}
+      ${p.notes ? `<div class="proj-meta-item"><div class="proj-meta-label">Заметки</div><div style="color:var(--ink2)">${escHtml(p.notes)}</div></div>` : ''}
+      <div class="proj-meta-item">
+        <div class="proj-meta-label">Прогресс</div>
+        <div class="proj-progress-row" style="width:200px">
+          <div class="proj-progress-bar"><div class="proj-progress-fill" style="width:${pct}%;background:${p.color||'var(--brick)'}"></div></div>
+          <span class="proj-pct">${done}/${tasks.length}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Канбан по этапам -->
+    <div class="kb-board proj-kanban">
+      ${DESIGN_STAGES.map(stage => {
+        const stageTasks = tasks.filter(t => (t.stage || (t.status==='done'?'done':'brief')) === stage.id);
+        return `<div class="kb-col">
+          <div class="kb-col-header">
+            <div class="kb-col-dot" style="background:${stage.color}"></div>
+            <span class="kb-col-title">${stage.label}</span>
+            <span class="kb-col-cnt">${stageTasks.length}</span>
+          </div>
+          <div class="kb-col-body" data-stage="${stage.id}">
+            ${stageTasks.map(t => `
+              <div class="kb-card ${t.status==='done'?'done':''}" data-tid="${t.id}">
+                <div class="kb-card-bar" style="background:${stage.color}"></div>
+                <div class="kb-card-body">
+                  <div class="task-check ${t.status==='done'?'checked':''}" data-id="${t.id}">${t.status==='done'?'✓':''}</div>
+                  <div class="kb-card-title">${escHtml(t.title)}</div>
+                </div>
+                ${t.date_due ? `<div class="kb-card-footer"><span class="tl-date ${t.date_due<todayStr()&&t.status!=='done'?'over':''}">${fmtDateShort(t.date_due)}</span></div>` : ''}
+              </div>`).join('')}
+            ${!stageTasks.length ? '<div class="kb-empty">пусто</div>' : ''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    ${buildProjectModal(p)}
+  `;
+
+  page.querySelector('#proj-back')?.addEventListener('click', () => { projectsState.selectedId = null; renderProjectsPage(); });
+  page.querySelector('#btn-add-proj-task')?.addEventListener('click', () => {
+    // Открываем форму задачи с предустановленным проектом
+    openTaskModal(null);
+    setTimeout(() => {
+      const sel = document.getElementById('f-section');
+      if(sel) { sel.value = 'projects'; sel.dispatchEvent(new Event('change')); }
+      const proj = document.getElementById('f-project');
+      if(proj) proj.value = String(p.id);
+    }, 50);
+  });
+  page.querySelectorAll('.kb-card[data-tid]').forEach(el => {
+    el.addEventListener('click', e => { if(e.target.closest('.task-check')) return; openTaskModal(parseInt(el.dataset.tid)); });
+  });
+  page.querySelectorAll('.task-check[data-id]').forEach(el => {
+    el.addEventListener('click', e => { e.stopPropagation(); toggleTask(parseInt(el.dataset.id)).then(()=>renderProjectsPage()); });
+  });
+  bindProjectModal(page);
+}
+
+function buildProjectModal(proj) {
+  if(!projectsState.editingProject && projectsState.editingProject !== null) return '';
+  if(projectsState.editingProject === null) return '';
+  const p = projectsState.editingProject;
+  const isNew = !p.id;
+  const COLORS = ['#a84332','#534AB7','#185FA5','#1D9E75','#BA7517','#993C1D','#5F5E5A','#0f6e56'];
+
+  return `<div class="modal-overlay" id="proj-modal-ov">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title">${isNew?'НОВЫЙ ПРОЕКТ':'РЕДАКТИРОВАТЬ ПРОЕКТ'}</div>
+        <button class="modal-close" id="proj-modal-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="mf-row"><input type="text" id="pm-name" class="f-title-input" placeholder="Название проекта..." value="${escHtml(p.name||'')}"></div>
+        <div class="mf-2col">
+          <div class="mf-field"><label class="mf-label">Клиент</label><input type="text" id="pm-client" class="f-input" value="${escHtml(p.client||'')}"></div>
+          <div class="mf-field"><label class="mf-label">Тип</label>
+            <select id="pm-type" class="f-select">
+              ${['HoReCa','Retail','База отдыха','Офис/БЦ','Жильё','Другое'].map(t=>`<option ${p.type===t?'selected':''}>${t}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="mf-2col">
+          <div class="mf-field"><label class="mf-label">Площадь (м²)</label><input type="number" id="pm-area" class="f-input" value="${p.area||''}"></div>
+          <div class="mf-field"><label class="mf-label">Бюджет (₽)</label><input type="number" id="pm-budget" class="f-input" value="${p.budget||''}"></div>
+        </div>
+        <div class="mf-2col">
+          <div class="mf-field"><label class="mf-label">Старт</label><input type="date" id="pm-start" class="f-input" value="${p.start_date||''}"></div>
+          <div class="mf-field"><label class="mf-label">Дедлайн</label><input type="date" id="pm-end" class="f-input" value="${p.end_date||''}"></div>
+        </div>
+        <div class="mf-field"><label class="mf-label">Стадия</label>
+          <select id="pm-stage" class="f-select">
+            ${DESIGN_STAGES.map(s=>`<option value="${s.id}" ${(p.stage||'brief')===s.id?'selected':''}>${s.label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="mf-field"><label class="mf-label">Заметки</label><textarea id="pm-notes" class="f-textarea">${escHtml(p.notes||'')}</textarea></div>
+        <div class="mf-field"><label class="mf-label">Цвет</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            ${COLORS.map(col=>`<div class="color-swatch ${(p.color||'#a84332')===col?'active':''}" data-color="${col}" style="background:${col}"></div>`).join('')}
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <div class="modal-footer-left">${!isNew?`<button class="btn-delete" id="pm-delete">Удалить</button>`:''}</div>
+        <div class="modal-footer-right">
+          <button class="btn-secondary" id="pm-cancel">Отмена</button>
+          <button class="btn-primary" id="pm-save">Сохранить</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function bindProjectModal(page) {
+  let pickedColor = projectsState.editingProject?.color || '#a84332';
+
+  page.querySelector('#proj-modal-ov')?.addEventListener('click', e => { if(e.target.id==='proj-modal-ov') { projectsState.editingProject=null; renderProjectsPage(); } });
+  page.querySelector('#proj-modal-close')?.addEventListener('click', () => { projectsState.editingProject=null; renderProjectsPage(); });
+  page.querySelector('#pm-cancel')?.addEventListener('click', () => { projectsState.editingProject=null; renderProjectsPage(); });
+
+  page.querySelectorAll('.color-swatch').forEach(sw => {
+    sw.addEventListener('click', () => {
+      pickedColor = sw.dataset.color;
+      page.querySelectorAll('.color-swatch').forEach(s => s.classList.toggle('active', s.dataset.color===pickedColor));
+    });
+  });
+
+  page.querySelector('#pm-save')?.addEventListener('click', async () => {
+    const name = document.getElementById('pm-name')?.value.trim();
+    if(!name) { showToast('Введите название','error'); return; }
+    const data = {
+      name, client: document.getElementById('pm-client')?.value||null,
+      type: document.getElementById('pm-type')?.value||null,
+      area: parseFloat(document.getElementById('pm-area')?.value)||null,
+      budget: parseFloat(document.getElementById('pm-budget')?.value)||null,
+      start_date: document.getElementById('pm-start')?.value||null,
+      end_date: document.getElementById('pm-end')?.value||null,
+      stage: document.getElementById('pm-stage')?.value||'brief',
+      notes: document.getElementById('pm-notes')?.value||null,
+      color: pickedColor,
+    };
+    const p = projectsState.editingProject;
+    if(p?.id) {
+      const {error} = await SB.from('projects').update(data).eq('id',p.id);
+      if(!error) { const idx=state.projects.findIndex(x=>x.id===p.id); if(idx>=0) Object.assign(state.projects[idx],data); }
+    } else {
+      const {data:saved,error} = await SB.from('projects').insert(data).select().single();
+      if(!error && saved) state.projects.push(saved);
+    }
+    projectsState.editingProject = null;
+    renderProjectsPage();
+    showToast(p?.id?'Проект обновлён':'Проект создан','success');
+  });
+
+  page.querySelector('#pm-delete')?.addEventListener('click', async () => {
+    if(!confirm('Удалить проект? Задачи останутся.')) return;
+    const p = projectsState.editingProject;
+    await SB.from('projects').delete().eq('id',p.id);
+    state.projects = state.projects.filter(x=>x.id!==p.id);
+    projectsState.editingProject = null;
+    projectsState.selectedId = null;
+    renderProjectsPage();
+    showToast('Проект удалён');
+  });
+}
+
+// ─── GANTT PAGE (frappe-gantt) ───────────────────────────────
+let ganttState = {
+  period: 'Month',
+  instance: null,
+};
+
+function ensureFrappeGantt(cb) {
+  if(!document.querySelector('link[data-frappe-css]')) {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css';
+    link.dataset.frappeCss = '1';
+    document.head.appendChild(link);
+  }
+  if(window.Gantt) { cb(); return; }
+  const script = document.createElement('script');
+  script.src = 'https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js';
+  script.onload = cb;
+  script.onerror = () => showToast('Не удалось загрузить библиотеку Ганта', 'error');
+  document.head.appendChild(script);
+}
+
+function renderGanttPage() {
+  const page = document.getElementById('page-gantt');
+  if(!page || !page.classList.contains('active')) return;
+
+  page.innerHTML = `
+    <div class="tp-header">
+      <div class="tp-title">ГАНТ</div>
+      <div class="gantt-period-toggle">
+        <button class="gp-btn ${ganttState.period==='Day'?'active':''}" data-gperiod="Day">ДЕНЬ</button>
+        <button class="gp-btn ${ganttState.period==='Week'?'active':''}" data-gperiod="Week">НЕДЕЛЯ</button>
+        <button class="gp-btn ${ganttState.period==='Month'?'active':''}" data-gperiod="Month">МЕСЯЦ</button>
+        <button class="gp-btn ${ganttState.period==='Quarter Year'?'active':''}" data-gperiod="Quarter Year">КВАРТАЛ</button>
+      </div>
+    </div>
+    <div id="gantt-container" style="flex:1;overflow:auto;padding:16px;background:var(--paper)">
+      <p id="gantt-loading" style="text-align:center;padding:40px;color:var(--ink3);font-size:11px;letter-spacing:.06em">ЗАГРУЗКА...</p>
+      <svg id="gantt-svg"></svg>
+    </div>
+  `;
+
+  page.querySelectorAll('[data-gperiod]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      ganttState.period = btn.dataset.gperiod;
+      renderGanttPage();
+    });
+  });
+
+  ensureFrappeGantt(() => initFrappeGantt(page));
+}
+
+function buildFrappeTasks() {
+  const tasks = [];
+
+  state.projects.forEach(p => {
+    const projTasks = state.tasks.filter(t => t.project_id === p.id && t.date_due);
+    if(!projTasks.length) return;
+    const dates = projTasks.map(t => t.date_due).sort();
+    const startD = p.start_date || dates[0];
+    const endD = p.end_date || dates[dates.length-1];
+    const done = projTasks.filter(t=>t.status==='done').length;
+    tasks.push({
+      id: 'proj_' + p.id,
+      name: p.name,
+      start: startD,
+      end: endD,
+      progress: Math.round(done/projTasks.length*100),
+      custom_class: 'proj-bar',
+      _color: p.color || '#a84332',
+      _type: 'project',
+      _origId: p.id,
+    });
+    projTasks.forEach(t => {
+      const start = t.created_at ? t.created_at.slice(0,10) : t.date_due;
+      const s = start < t.date_due ? start : t.date_due;
+      tasks.push({
+        id: 'task_' + t.id,
+        name: '\u00a0\u00a0\u2514 ' + t.title,
+        start: s,
+        end: t.date_due,
+        progress: t.status==='done' ? 100 : 0,
+        dependencies: t.depends_on ? 'task_' + t.depends_on : '',
+        custom_class: 'task-bar' + (t.status==='done'?' done':''),
+        _color: SECTION_COLORS[t.section] || '#3d3d3a',
+        _type: 'task',
+        _origId: t.id,
+      });
+    });
+  });
+
+  state.tasks.filter(t => !t.project_id && t.date_due).forEach(t => {
+    const start = t.created_at ? t.created_at.slice(0,10) : t.date_due;
+    const s = start < t.date_due ? start : t.date_due;
+    tasks.push({
+      id: 'task_' + t.id,
+      name: t.title,
+      start: s,
+      end: t.date_due,
+      progress: t.status==='done' ? 100 : 0,
+      dependencies: t.depends_on ? 'task_' + t.depends_on : '',
+      custom_class: 'task-bar' + (t.status==='done'?' done':''),
+      _color: SECTION_COLORS[t.section] || '#3d3d3a',
+      _type: 'task',
+      _origId: t.id,
+    });
+  });
+
+  return tasks;
+}
+
+function initFrappeGantt(page) {
+  const loading = document.getElementById('gantt-loading');
+  const svgEl = document.getElementById('gantt-svg');
+  if(!svgEl) return;
+
+  const tasks = buildFrappeTasks();
+  if(!tasks.length) {
+    if(loading) { loading.textContent = 'Нет задач с датами. Добавьте задачи с дедлайном.'; }
+    return;
+  }
+  if(loading) loading.style.display = 'none';
+
+  try {
+    ganttState.instance = new Gantt('#gantt-svg', tasks, {
+      view_mode: ganttState.period,
+      date_format: 'YYYY-MM-DD',
+      popup_trigger: 'click',
+      custom_popup_html: function(task) {
+        const orig = task._type==='task'
+          ? state.tasks.find(t=>t.id===task._origId)
+          : state.projects.find(p=>p.id===task._origId);
+        if(!orig) return '<div class="gantt-popup">...</div>';
+        const name = orig.name||orig.title||'';
+        const date = task._type==='task' ? orig.date_due : orig.end_date;
+        return '<div class="gantt-popup">'
+          + '<div class="gantt-popup-title">' + escHtml(name) + '</div>'
+          + (date ? '<div class="gantt-popup-meta">Дедлайн: ' + fmtDateShort(date) + '</div>' : '')
+          + '<button class="gantt-popup-btn" onclick="ganttOpenEdit(\'' + task._type + '\',' + task._origId + ')">Редактировать</button>'
+          + '</div>';
+      },
+      on_date_change: async function(task, start, end) {
+        const endStr = end.toISOString().slice(0,10);
+        const startStr = start.toISOString().slice(0,10);
+        if(task._type === 'task') {
+          const t = state.tasks.find(x=>x.id===task._origId);
+          if(t) { t.date_due=endStr; await SB.from('bb_tasks').update({date_due:endStr}).eq('id',t.id); showToast('Дата обновлена','success'); }
+        } else {
+          const p = state.projects.find(x=>x.id===task._origId);
+          if(p) { p.end_date=endStr; p.start_date=startStr; await SB.from('projects').update({end_date:endStr,start_date:startStr}).eq('id',p.id); showToast('Проект обновлён','success'); }
+        }
+      },
+      on_progress_change: async function(task, progress) {
+        if(task._type === 'task') {
+          const t = state.tasks.find(x=>x.id===task._origId);
+          if(t) { const ns=progress>=100?'done':'active'; t.status=ns; await SB.from('bb_tasks').update({status:ns}).eq('id',t.id); }
+        }
+      },
+    });
+
+    // Раскрашиваем бары в цвета разделов/проектов
+    setTimeout(() => {
+      tasks.forEach(task => {
+        const barEl = document.querySelector('.bar-wrapper[data-id="' + task.id + '"] .bar');
+        if(barEl && task._color) {
+          barEl.style.fill = task._color + (task._type==='project' ? '22' : '33');
+          barEl.style.stroke = task._color;
+          barEl.style.strokeWidth = task._type==='project' ? '2' : '1.5';
+        }
+      });
+    }, 200);
+
+  } catch(err) {
+    console.error('frappe-gantt error:', err);
+    if(loading) { loading.style.display='block'; loading.textContent = 'Ошибка Ганта: ' + err.message; }
+  }
+}
+
+window.ganttOpenEdit = function(type, id) {
+  if(type==='task') openTaskModal(parseInt(id));
+  else {
+    const p = state.projects.find(x=>x.id===parseInt(id));
+    if(p) { projectsState.editingProject={...p}; renderProjectsPage(); }
+  }
+};
+
+// ─── GOALS PAGE ───────────────────────────────────────────────
+// ─── GOALS PAGE ───────────────────────────────────────────────
+const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
+
+let goalsState = {
+  editingGoal: null,
+  chatGoalId: null,
+  chatMessages: [],
+  aiLoading: false,
+  apiKey: localStorage.getItem('bb-ai-key') || '',
+};
+
+function renderGoalsPage() {
+  const page = document.getElementById('page-goals');
+  if(!page || !page.classList.contains('active')) return;
+  try {
+    if(!state.goals) state.goals = [];
+    const goals = state.goals;
+    const hasKey = !!goalsState.apiKey;
+
+    let html = `<div class="tp-header">
+      <div class="tp-title">ЦЕЛИ</div>
+      <div class="tp-stats"><span>${goals.length} целей</span></div>
+      ${!hasKey
+        ? `<button class="btn-secondary" id="btn-set-apikey" style="font-size:10px">✦ API ключ Claude</button>`
+        : `<span style="font-size:10px;color:var(--green)">✦ Claude подключён</span>`}
+      <button class="btn-add-task" id="btn-add-goal">+ ЦЕЛЬ</button>
+    </div>`;
+
+    if(!hasKey) {
+      html += `<div class="goals-api-notice">
+        <div class="gan-icon">✦</div>
+        <div>
+          <div style="font-size:12px;font-weight:600;margin-bottom:4px">Подключите Claude для работы с целями</div>
+          <div style="font-size:11px;color:var(--ink3)">AI задаст уточняющие вопросы, декомпозирует цель и встроит шаги в расписание</div>
+          <button class="btn-secondary" id="btn-set-apikey-2" style="margin-top:8px;font-size:10px">Добавить API ключ →</button>
+        </div>
+      </div>`;
+    }
+
+    html += `<div class="goals-list" id="goals-list">`;
+    if(goals.length) {
+      goals.forEach(g => { html += buildGoalCard(g); });
+    } else {
+      html += `<div class="empty-state"><div class="empty-icon">◎</div><div class="empty-text">Нет целей. Поставьте первую.</div></div>`;
+    }
+    html += `</div>`;
+
+    if(goalsState.chatGoalId) html += buildGoalChat(goalsState.chatGoalId);
+    if(goalsState.editingGoal !== null) html += buildGoalModal();
+
+    page.innerHTML = html;
+
+    page.querySelector('#btn-add-goal')?.addEventListener('click', () => { goalsState.editingGoal={}; renderGoalsPage(); });
+    page.querySelector('#btn-set-apikey')?.addEventListener('click', promptApiKey);
+    page.querySelector('#btn-set-apikey-2')?.addEventListener('click', promptApiKey);
+
+    page.querySelectorAll('[data-goal-id]').forEach(el => {
+      el.addEventListener('click', e => {
+        if(e.target.closest('.goal-btn')) return;
+        const id = parseInt(el.dataset.goalId);
+        goalsState.chatGoalId = id;
+        goalsState.chatMessages = [];
+        renderGoalsPage();
+        if(goalsState.apiKey) setTimeout(() => startGoalChat(id), 100);
+      });
+    });
+    page.querySelectorAll('[data-edit-goal]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const g = (state.goals||[]).find(x=>x.id===parseInt(btn.dataset.editGoal));
+        goalsState.editingGoal = g ? Object.assign({},g) : {};
+        renderGoalsPage();
+      });
+    });
+    page.querySelectorAll('[data-done-goal]').forEach(btn => {
+      btn.addEventListener('click', e => { e.stopPropagation(); completeGoal(parseInt(btn.dataset.doneGoal)); });
+    });
+
+    bindGoalChat(page);
+    bindGoalModal(page);
+
+    page.querySelectorAll('[data-sub-id]').forEach(el => {
+      el.addEventListener('click', e => {
+        e.stopPropagation();
+        toggleSubtask(parseInt(el.dataset.subId), el.dataset.goalId);
+      });
+    });
+
+  } catch(err) {
+    console.error('renderGoalsPage:', err);
+    page.innerHTML = '<div class="page-stub"><div class="stub-icon">!</div><div class="stub-label">Ошибка: '+err.message+'</div></div>';
+  }
+}
+
+function buildGoalCard(g) {
+  const steps = state.subtasks[g.id] || [];
+  const doneSteps = steps.filter(s=>s.done).length;
+  const pct = steps.length ? Math.round(doneSteps/steps.length*100) : 0;
+  const isDone = g.status === 'done';
+  const over = g.deadline && g.deadline < todayStr() && !isDone;
+  const SCOLORS = {bureau:'var(--c-bureau)',projects:'var(--c-projects)',marketing:'var(--c-marketing)',finance:'var(--c-finance)',growth:'var(--c-growth)',partners:'var(--c-partners)'};
+  const color = SCOLORS[g.section] || 'var(--brick)';
+
+  let html = '<div class="goal-card'+(isDone?' done':'')+'" data-goal-id="'+g.id+'">';
+  html += '<div class="goal-card-accent" style="background:'+color+'"></div>';
+  html += '<div class="goal-card-body">';
+  html += '<div class="goal-card-header"><div class="goal-title">'+escHtml(g.title)+'</div>';
+  html += '<div class="goal-actions">';
+  if(!isDone) html += '<button class="goal-btn" data-done-goal="'+g.id+'">✓</button>';
+  html += '<button class="goal-btn" data-edit-goal="'+g.id+'">···</button>';
+  html += '</div></div>';
+  html += '<div class="goal-meta">';
+  if(g.section) html += '<span class="proj-stage-badge" style="color:'+color+';border-color:'+color+'22;background:'+color+'10">'+(SECTION_LABELS[g.section]||g.section)+'</span>';
+  if(g.deadline) html += '<span class="proj-date'+(over?' over':'')+'">'+(over?'⚠ ':'')+'до '+fmtDateShort(g.deadline)+'</span>';
+  if(isDone) html += '<span style="color:var(--green);font-size:10px;font-weight:600">✓ Достигнута</span>';
+  html += '</div>';
+  if(g.notes) html += '<div class="goal-notes">'+escHtml(g.notes)+'</div>';
+  if(steps.length) {
+    html += '<div class="goal-progress"><div class="proj-progress-bar"><div class="proj-progress-fill" style="width:'+pct+'%;background:'+color+'"></div></div><span class="proj-pct">'+doneSteps+'/'+steps.length+' шагов</span></div>';
+    html += '<div class="goal-steps">';
+    steps.slice(0,3).forEach(s => {
+      html += '<div class="goal-step'+(s.done?' done':'')+'"><div class="subtask-check'+(s.done?' checked':'')+'" data-sub-id="'+s.id+'" data-goal-id="'+g.id+'">'+(s.done?'✓':'')+'</div><span>'+escHtml(s.title)+'</span></div>';
+    });
+    if(steps.length>3) html += '<div class="goal-step-more">+ ещё '+(steps.length-3)+' шагов</div>';
+    html += '</div>';
+  } else {
+    html += '<div class="goal-ai-hint">Нажмите чтобы начать диалог с Claude ✦</div>';
+  }
+  html += '</div></div>';
+  return html;
+}
+
+function buildGoalChat(goalId) {
+  const g = (state.goals||[]).find(x=>x.id===goalId);
+  if(!g) return '';
+  let html = '<div class="goal-chat-panel" id="goal-chat">';
+  html += '<div class="gcp-header"><div class="gcp-title">✦ Claude помогает с целью</div>';
+  html += '<div class="gcp-goal-name">'+escHtml(g.title)+'</div>';
+  html += '<button class="gsp-close" id="gcp-close">✕</button></div>';
+  html += '<div class="gcp-messages" id="gcp-messages">';
+  goalsState.chatMessages.forEach(m => {
+    html += '<div class="gcp-msg '+m.role+'">';
+    html += '<div class="gcp-msg-label">'+(m.role==='user'?'Вы':'Claude ✦')+'</div>';
+    html += '<div class="gcp-msg-text">'+(m.role==='assistant'?m.content.replace(/\n/g,'<br>'):escHtml(m.content))+'</div>';
+    if(m.tasks && m.tasks.length) {
+      html += '<div class="gcp-tasks"><div class="gcp-tasks-title">Предложенные шаги:</div>';
+      m.tasks.forEach((t,i) => {
+        html += '<div class="gcp-task-item"><span class="gcp-task-num">'+(i+1)+'</span><span>'+escHtml(t.title)+'</span>';
+        if(t.date) html += '<span class="gcp-task-date">'+fmtDateShort(t.date)+'</span>';
+        html += '</div>';
+      });
+      html += '<button class="btn-primary" id="btn-create-tasks" style="margin-top:10px;font-size:10px">Создать задачи в расписании</button>';
+      html += '</div>';
+    }
+    html += '</div>';
+  });
+  if(goalsState.aiLoading) {
+    html += '<div class="gcp-msg assistant"><div class="gcp-msg-label">Claude ✦</div><div class="gcp-typing"><span></span><span></span><span></span></div></div>';
+  }
+  html += '</div>';
+  html += '<div class="gcp-input-row"><input type="text" id="gcp-input" class="gcp-input" placeholder="Ответьте или уточните..."><button class="btn-primary" id="gcp-send"'+(goalsState.aiLoading?' disabled':'')+'>→</button></div>';
+  html += '</div>';
+  return html;
+}
+
+function bindGoalChat(page) {
+  page.querySelector('#gcp-close')?.addEventListener('click', () => { goalsState.chatGoalId=null; goalsState.chatMessages=[]; renderGoalsPage(); });
+  page.querySelector('#gcp-send')?.addEventListener('click', sendGoalMessage);
+  page.querySelector('#gcp-input')?.addEventListener('keydown', e => { if(e.key==='Enter') sendGoalMessage(); });
+  page.querySelector('#btn-create-tasks')?.addEventListener('click', createTasksFromChat);
+  const msgs = document.getElementById('gcp-messages');
+  if(msgs) msgs.scrollTop = msgs.scrollHeight;
+}
+
+async function startGoalChat(goalId) {
+  const g = (state.goals||[]).find(x=>x.id===goalId);
+  if(!g || !goalsState.apiKey) return;
+  const steps = state.subtasks[g.id] || [];
+  const systemPrompt = 'Ты помощник по достижению целей в BrickBuro — дизайн-бюро в Санкт-Петербурге.\n'
+    + 'Задача: помочь достичь конкретной цели через декомпозицию и встраивание шагов в расписание.\n'
+    + 'Принципы:\n- Задай 1-2 уточняющих вопроса\n- Предложи декомпозицию: этапы → шаги на месяц → задачи на неделю\n'
+    + '- Будь конкретным, без воды\n- Учитывай загруженность дизайн-бюро\n- Отвечай на русском\n'
+    + '- Когда предлагаешь задачи, добавь в конце: TASKS_JSON:[{"title":"...","date":"2026-05-10","section":"bureau"}]\n\n'
+    + 'Цель: "' + g.title + '"' + (g.deadline ? '\nДедлайн: ' + g.deadline : '') + (g.notes ? '\nКонтекст: ' + g.notes : '')
+    + (steps.length ? '\nЗапланировано шагов: ' + steps.length : '');
+
+  goalsState.chatMessages = [{ role:'user', content:'Помоги достичь цели: "'+g.title+'"'+(g.deadline?' к '+g.deadline:'') }];
+  await callGoalAI(systemPrompt);
+}
+
+async function sendGoalMessage() {
+  const inp = document.getElementById('gcp-input');
+  if(!inp) return;
+  const text = inp.value.trim();
+  if(!text || goalsState.aiLoading) return;
+  const g = (state.goals||[]).find(x=>x.id===goalsState.chatGoalId);
+  if(!g) return;
+  goalsState.chatMessages.push({ role:'user', content:text });
+  inp.value = '';
+  const sys = 'Ты помощник по целям в BrickBuro. Цель: "'+g.title+'"'+(g.deadline?' (дедлайн: '+g.deadline+')':'')+'.\nОтвечай по-русски, конкретно. Если предлагаешь задачи — добавь: TASKS_JSON:[{"title":"...","date":"2026-XX-XX","section":"bureau"}]';
+  await callGoalAI(sys);
+}
+
+async function callGoalAI(systemPrompt) {
+  if(!goalsState.apiKey) { showToast('Нет API ключа Claude','error'); return; }
+  goalsState.aiLoading = true;
+  renderGoalsPage();
+  const msgs = document.getElementById('gcp-messages');
+  if(msgs) msgs.scrollTop = msgs.scrollHeight;
+
+  try {
+    const resp = await fetch(ANTHROPIC_API, {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        'x-api-key': goalsState.apiKey,
+        'anthropic-version':'2023-06-01',
+        'anthropic-dangerous-direct-browser-access':'true',
+      },
+      body: JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:1000,
+        system: systemPrompt,
+        messages: goalsState.chatMessages.map(m=>({role:m.role,content:m.content})),
+      })
+    });
+    const data = await resp.json();
+    const text = data.content?.[0]?.text || 'Ошибка ответа';
+    let tasks = null, displayText = text;
+    const m = text.match(/TASKS_JSON:(\[[\s\S]*?\])/);
+    if(m) { try { tasks=JSON.parse(m[1]); displayText=text.replace(/TASKS_JSON:[\s\S]*?\]/, '').trim(); } catch(e){} }
+    goalsState.chatMessages.push({ role:'assistant', content:displayText, tasks });
+  } catch(err) {
+    goalsState.chatMessages.push({ role:'assistant', content:'Ошибка: '+err.message });
+  }
+  goalsState.aiLoading = false;
+  renderGoalsPage();
+  const msgsEl = document.getElementById('gcp-messages');
+  if(msgsEl) msgsEl.scrollTop = msgsEl.scrollHeight;
+}
+
+async function createTasksFromChat() {
+  const last = [...goalsState.chatMessages].reverse().find(m=>m.tasks);
+  if(!last?.tasks) return;
+  const goalId = goalsState.chatGoalId;
+  let created = 0;
+  for(const t of last.tasks) {
+    const {data,error} = await SB.from('bb_tasks').insert({title:t.title,section:t.section||'bureau',date_due:t.date||null,status:'active',priority:2,urgency:2}).select().single();
+    if(!error&&data){state.tasks.unshift(data);created++;}
+    const order=(state.subtasks[goalId]||[]).length;
+    const {data:sub}=await SB.from('bb_subtasks').insert({task_id:goalId,title:t.title+(t.date?' ('+fmtDateShort(t.date)+')':''),done:false,order_num:order}).select().single();
+    if(sub){if(!state.subtasks[goalId])state.subtasks[goalId]=[];state.subtasks[goalId].push(sub);}
+  }
+  showToast('Создано '+created+' задач','success');
+  last.tasks=null;
+  renderGoalsPage();
+}
+
+async function completeGoal(goalId) {
+  await SB.from('bb_goals').update({status:'done'}).eq('id',goalId);
+  const g=(state.goals||[]).find(x=>x.id===goalId);
+  if(g) g.status='done';
+  launchConfetti();
+  showToast('Цель достигнута!','success');
+  renderGoalsPage();
+}
+
+function launchConfetti() {
+  const canvas=document.createElement('canvas');
+  canvas.style.cssText='position:fixed;inset:0;pointer-events:none;z-index:9999;width:100%;height:100%';
+  document.body.appendChild(canvas);
+  const ctx=canvas.getContext('2d');
+  canvas.width=window.innerWidth; canvas.height=window.innerHeight;
+  const pieces=Array.from({length:150},()=>({
+    x:Math.random()*canvas.width, y:Math.random()*canvas.height-canvas.height,
+    r:Math.random()*8+4, color:['#a84332','#534AB7','#1D9E75','#BA7517','#185FA5'][Math.floor(Math.random()*5)],
+    vx:(Math.random()-.5)*4, vy:Math.random()*3+2, rot:Math.random()*360, vrot:(Math.random()-.5)*8,
+  }));
+  let frame=0;
+  function draw(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    pieces.forEach(p=>{
+      ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.rot*Math.PI/180);
+      ctx.fillStyle=p.color; ctx.globalAlpha=Math.max(0,1-frame/90);
+      ctx.fillRect(-p.r/2,-p.r/2,p.r,p.r/2); ctx.restore();
+      p.x+=p.vx; p.y+=p.vy; p.rot+=p.vrot; p.vy+=0.1;
+    });
+    frame++;
+    if(frame<100) requestAnimationFrame(draw); else canvas.remove();
+  }
+  draw();
+}
+
+function promptApiKey() {
+  const key=prompt('Введите API ключ Claude (начинается с sk-ant-):\n\nПолучить: console.anthropic.com');
+  if(key&&key.startsWith('sk-')){goalsState.apiKey=key;localStorage.setItem('bb-ai-key',key);showToast('Claude подключён','success');renderGoalsPage();}
+  else if(key) showToast('Неверный формат ключа','error');
+}
+
+function buildGoalModal() {
+  const g=goalsState.editingGoal||{};
+  const isNew=!g.id;
+  let html='<div class="modal-overlay" id="goal-modal-ov"><div class="modal">';
+  html+='<div class="modal-header"><div class="modal-title">'+(isNew?'НОВАЯ ЦЕЛЬ':'РЕДАКТИРОВАТЬ ЦЕЛЬ')+'</div><button class="modal-close" id="gm-close">✕</button></div>';
+  html+='<div class="modal-body">';
+  html+='<div class="mf-row"><input type="text" id="gm-title" class="f-title-input" placeholder="Формулировка цели..." value="'+escHtml(g.title||'')+'"></div>';
+  html+='<div class="mf-2col"><div class="mf-field"><label class="mf-label">Раздел</label><select id="gm-section" class="f-select">';
+  [['bureau','🏢 Бюро'],['projects','🏗 Проекты'],['marketing','📣 Маркетинг'],['finance','💰 Финансы'],['growth','📈 Развитие']].forEach(([v,l])=>{
+    html+='<option value="'+v+'"'+(( g.section||'bureau')===v?' selected':'')+'>'+l+'</option>';
+  });
+  html+='</select></div>';
+  html+='<div class="mf-field"><label class="mf-label">Дедлайн</label><input type="date" id="gm-deadline" class="f-input" value="'+(g.deadline||'')+'"></div></div>';
+  html+='<div class="mf-row"><label class="mf-label">Контекст / зачем эта цель</label><textarea id="gm-notes" class="f-textarea" placeholder="Опишите подробнее — Claude учтёт при планировании">'+escHtml(g.notes||'')+'</textarea></div>';
+  html+='</div>';
+  html+='<div class="modal-footer"><div class="modal-footer-left">'+(isNew?'':`<button class="btn-delete" id="gm-delete">Удалить</button>`)+'</div>';
+  html+='<div class="modal-footer-right"><button class="btn-secondary" id="gm-cancel">Отмена</button><button class="btn-primary" id="gm-save">Сохранить'+(isNew&&goalsState.apiKey?' и начать диалог':'')+'</button></div></div>';
+  html+='</div></div>';
+  return html;
+}
+
+function bindGoalModal(page) {
+  page.querySelector('#goal-modal-ov')?.addEventListener('click',e=>{if(e.target.id==='goal-modal-ov'){goalsState.editingGoal=null;renderGoalsPage();}});
+  page.querySelector('#gm-close')?.addEventListener('click',()=>{goalsState.editingGoal=null;renderGoalsPage();});
+  page.querySelector('#gm-cancel')?.addEventListener('click',()=>{goalsState.editingGoal=null;renderGoalsPage();});
+  page.querySelector('#gm-delete')?.addEventListener('click',async()=>{
+    if(!confirm('Удалить цель?')) return;
+    const g=goalsState.editingGoal;
+    await SB.from('bb_goals').delete().eq('id',g.id);
+    state.goals=(state.goals||[]).filter(x=>x.id!==g.id);
+    goalsState.editingGoal=null; renderGoalsPage(); showToast('Цель удалена');
+  });
+  page.querySelector('#gm-save')?.addEventListener('click',async()=>{
+    const title=document.getElementById('gm-title')?.value.trim();
+    if(!title){showToast('Введите формулировку','error');return;}
+    const data={title,section:document.getElementById('gm-section')?.value||'bureau',deadline:document.getElementById('gm-deadline')?.value||null,notes:document.getElementById('gm-notes')?.value||null,status:'active'};
+    const g=goalsState.editingGoal;
+    let savedId=g?.id;
+    if(g?.id){
+      await SB.from('bb_goals').update(data).eq('id',g.id);
+      const idx=(state.goals||[]).findIndex(x=>x.id===g.id);
+      if(idx>=0) Object.assign(state.goals[idx],data);
+    } else {
+      const {data:saved,error}=await SB.from('bb_goals').insert(data).select().single();
+      if(!error&&saved){if(!state.goals)state.goals=[];state.goals.unshift(saved);savedId=saved.id;}
+    }
+    goalsState.editingGoal=null;
+    if(goalsState.apiKey&&savedId){goalsState.chatGoalId=savedId;goalsState.chatMessages=[];}
+    renderGoalsPage();
+    if(goalsState.apiKey&&savedId) setTimeout(()=>startGoalChat(savedId),200);
+    showToast(g?.id?'Цель обновлена':'Цель создана','success');
+  });
+}
+
 
 // ─── TASKS PAGE ───────────────────────────────────────────────
 function renderTasksPage() {
