@@ -340,12 +340,28 @@ function renderTasks() {
 
   // ШКАЛА ВРЕМЕНИ
   if(timed.length) {
-    const START_H=7, END_H=23, STEP=15; // 15 мин шаг
+    // Зоны: 8-10 по 1ч (60px), 10-20 по 30мин (30px/30мин = 60px/час), 20-23 по 1ч (60px)
+    // px на минуту в каждой зоне:
+    // 8-10: 60px/60мин = 1px/мин
+    // 10-20: 60px/60мин = 1px/мин (но деления каждые 30мин)
+    // 20-23: 60px/60мин = 1px/мин
+    // Итого одинаковый масштаб 1px/мин, но деления разные
+    const PX = 1; // px на минуту
+    const ZONES = [
+      {start:8,  end:10, step:60},  // по часу
+      {start:10, end:20, step:30},  // по полчаса
+      {start:20, end:23, step:60},  // по часу
+    ];
+    const START_H=8, END_H=23;
     const totalMins=(END_H-START_H)*60;
-    const PX_PER_MIN=2; // 2px на минуту = 120px на час
-    const totalH=(END_H-START_H);
 
-    // Текущее время
+    // Функция: минуты от START_H -> px
+    function minsToPx(mins) { return mins*PX; }
+    function timeToPx(hhmm) {
+      const [h,m]=hhmm.split(':').map(Number);
+      return minsToPx((h-START_H)*60+m);
+    }
+
     const now=new Date();
     const nowMins=now.getHours()*60+now.getMinutes()-START_H*60;
     const isToday=state.filter.date==='today'||getFilteredDate()===todayStr();
@@ -353,35 +369,41 @@ function renderTasks() {
     html+=`<div class="timeline-wrap">
       <div class="timeline-scale">`;
 
-    // Часовые метки
-    for(let h=START_H;h<=END_H;h++) {
-      const top=(h-START_H)*60*PX_PER_MIN;
-      html+=`<div class="tl-hour" style="top:${top}px">
-        <span class="tl-hour-label">${String(h).padStart(2,'0')}:00</span>
-        <div class="tl-hour-line"></div>
-      </div>`;
-      // 15-мин деления
-      if(h<END_H) {
-        [15,30,45].forEach(m=>{
-          const t2=(h-START_H)*60*PX_PER_MIN+m*PX_PER_MIN;
-          html+=`<div class="tl-quarter" style="top:${t2}px"><div class="tl-quarter-line ${m===30?'tl-half':''}"></div></div>`;
-        });
+    // Метки и деления по зонам
+    ZONES.forEach(zone=>{
+      for(let h=zone.start; h<zone.end; h++) {
+        const top=minsToPx((h-START_H)*60);
+        html+=`<div class="tl-hour" style="top:${top}px">
+          <span class="tl-hour-label">${String(h).padStart(2,'0')}:00</span>
+          <div class="tl-hour-line"></div>
+        </div>`;
+        if(zone.step===30) {
+          const t2=minsToPx((h-START_H)*60+30);
+          html+=`<div class="tl-quarter" style="top:${t2}px">
+            <span class="tl-half-label">${String(h).padStart(2,'0')}:30</span>
+            <div class="tl-quarter-line tl-half"></div>
+          </div>`;
+        }
       }
-    }
+    });
+    // Последняя метка 23:00
+    html+=`<div class="tl-hour" style="top:${minsToPx((END_H-START_H)*60)}px">
+      <span class="tl-hour-label">${END_H}:00</span>
+      <div class="tl-hour-line"></div>
+    </div>`;
 
-    // Линия текущего времени
     if(isToday && nowMins>=0 && nowMins<=totalMins) {
-      html+=`<div class="tl-now" style="top:${nowMins*PX_PER_MIN}px"><div class="tl-now-dot"></div><div class="tl-now-line"></div></div>`;
+      html+=`<div class="tl-now" style="top:${minsToPx(nowMins)}px"><div class="tl-now-dot"></div><div class="tl-now-line"></div></div>`;
     }
 
-    html+=`</div><div class="timeline-events" style="height:${totalH*60*PX_PER_MIN}px">`;
+    html+=`</div><div class="timeline-events" style="height:${minsToPx(totalMins)}px">`;
 
     // Задачи на шкале
     timed.forEach(task=>{
-      const startMins=timeToMins(task.time_start)-START_H*60;
-      const endMins=task.time_end?timeToMins(task.time_end)-START_H*60:startMins+60;
-      const top=Math.max(0,startMins*PX_PER_MIN);
-      const height=Math.max(30,(endMins-startMins)*PX_PER_MIN);
+      const startMins=timeToMins(task.time_start)-(START_H*60);
+      const endMins=task.time_end?timeToMins(task.time_end)-(START_H*60):startMins+60;
+      const top=Math.max(0,startMins*PX);
+      const height=Math.max(28,(endMins-startMins)*PX);
       const isDone=task.status==='done';
       const typeColor={task:'var(--ink)',meeting:'var(--c-projects)',call:'var(--green)',trip:'var(--blue)',deadline:'var(--brick)',payment:'var(--ochre)'}[task.type]||'var(--ink)';
       const secColor=SECTION_COLORS[task.section]||'var(--ink3)';
