@@ -1299,11 +1299,31 @@ async function createTasksFromChat() {
   const goalId = goalsState.chatGoalId;
   let created = 0;
   for(const t of last.tasks) {
-    const {data,error} = await SB.from('bb_tasks').insert({title:t.title,section:t.section||'bureau',date_due:t.date||null,status:'active',priority:2,urgency:2}).select().single();
-    if(!error&&data){state.tasks.unshift(data);created++;}
-    const order=(state.subtasks[goalId]||[]).length;
-    const {data:sub}=await SB.from('bb_subtasks').insert({task_id:goalId,title:t.title+(t.date?' ('+fmtDateShort(t.date)+')':''),done:false,order_num:order}).select().single();
-    if(sub){if(!state.subtasks[goalId])state.subtasks[goalId]=[];state.subtasks[goalId].push(sub);}
+    // Создаём задачу
+    const taskPayload = {
+      title: t.title,
+      section: t.section || 'bureau',
+      date_due: t.date || null,
+      status: 'active',
+      priority: 2,
+      urgency: 2,
+      type: 'task',
+    };
+    const {data,error} = await SB.from('bb_tasks').insert(taskPayload).select().single();
+    if(error) { console.error('Ошибка создания задачи:', error); continue; }
+    if(data) { state.tasks.unshift(data); created++; }
+
+    // Добавляем шаг в список шагов цели (через bb_subtasks)
+    const order = (state.subtasks[goalId]||[]).length;
+    const subTitle = t.title + (t.date ? ' ('+fmtDateShort(t.date)+')' : '');
+    const {data:sub, error:subErr} = await SB.from('bb_subtasks')
+      .insert({task_id: goalId, title: subTitle, done: false, order_num: order})
+      .select().single();
+    if(subErr) console.error('Ошибка подзадачи:', subErr);
+    if(sub) {
+      if(!state.subtasks[goalId]) state.subtasks[goalId]=[];
+      state.subtasks[goalId].push(sub);
+    }
   }
   showToast('Создано '+created+' задач','success');
   last.tasks=null;
