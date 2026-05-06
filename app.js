@@ -39,6 +39,7 @@ let state = {
   calYear: new Date().getFullYear(),
   editingTaskId: null,
   formSubtasks: [],
+  quickAddTaskId: null, // для быстрого добавления подзадачи
 };
 
 let tasksState = {
@@ -141,6 +142,7 @@ async function loadTasks() {
       state.subtasks = {};
       subs.forEach(s=>{ if(!state.subtasks[s.task_id]) state.subtasks[s.task_id]=[]; state.subtasks[s.task_id].push(s); });
     }
+
   }
 }
 
@@ -258,21 +260,58 @@ function renderTodayHeader() {
 }
 
 // ─── TASKS RENDER ─────────────────────────────────────────────
-function getFilteredTasks() {
+function getFilteredDate() {
   const td=todayStr();
-  let tasks=state.tasks;
-  if(state.filter.date==='today') tasks=tasks.filter(t=>t.date_due===td);
-  else if(state.filter.date==='tomorrow') tasks=tasks.filter(t=>t.date_due===addDays(td,1));
-  else if(state.filter.date==='nodate') tasks=tasks.filter(t=>!t.date_due);
-  else tasks=tasks.filter(t=>t.date_due===state.filter.date);
+  if(state.filter.date==='today') return td;
+  if(state.filter.date==='tomorrow') return addDays(td,1);
+  if(state.filter.date==='nodate') return null;
+  return state.filter.date;
+}
+
+function isTaskOnDate(task, dateStr) {
+  if(!dateStr) return !task.date_due; // nodate
+  if(task.date_due===dateStr) return true;
+  // Повторяющиеся задачи
+  if(task.recurrence && task.date_due) {
+    const start=new Date(task.date_due+'T00:00:00');
+    const target=new Date(dateStr+'T00:00:00');
+    if(target<start) return false;
+    if(task.recurrence_end && target>new Date(task.recurrence_end+'T00:00:00')) return false;
+    const diffMs=target-start;
+    const diffDays=Math.round(diffMs/(1000*60*60*24));
+    if(task.recurrence==='daily') return true;
+    if(task.recurrence==='weekly') return diffDays%7===0;
+    if(task.recurrence==='biweekly') return diffDays%14===0;
+    if(task.recurrence==='monthly') {
+      return target.getDate()===start.getDate();
+    }
+    if(task.recurrence==='quarterly') {
+      const mDiff=(target.getFullYear()-start.getFullYear())*12+(target.getMonth()-start.getMonth());
+      return mDiff%3===0 && target.getDate()===start.getDate();
+    }
+    if(task.recurrence==='yearly') {
+      return target.getMonth()===start.getMonth() && target.getDate()===start.getDate();
+    }
+  }
+  return false;
+}
+
+function getFilteredTasks() {
+  const dateStr=getFilteredDate();
+  let tasks=state.tasks.filter(t=>isTaskOnDate(t,dateStr));
   if(state.filter.section!=='all') tasks=tasks.filter(t=>t.section===state.filter.section);
   return tasks;
+}
+
+function timeToMins(t) {
+  if(!t) return null;
+  const [h,m]=t.slice(0,5).split(':').map(Number);
+  return h*60+m;
 }
 
 function renderTasks() {
   const tasks=getFilteredTasks();
   const groups=document.getElementById('task-groups');
-  const empty=document.getElementById('empty-state');
   if(!groups) return;
 
   const total=tasks.length, done=tasks.filter(t=>t.status==='done').length;
@@ -289,35 +328,125 @@ function renderTasks() {
     </div>`;
 
   if(!total) {
-    if(empty) empty.classList.remove('hidden');
-    groups.innerHTML=''; groups.appendChild(empty||document.createElement('div')); return;
+    groups.innerHTML=`<div class="empty-state"><div class="empty-icon">◈</div><div class="empty-text">Задач нет. Хороший день.</div></div>`;
+    return;
   }
-  if(empty) empty.classList.add('hidden');
 
-  const timed=tasks.filter(t=>['meeting','call','trip'].includes(t.type)&&t.time_start).sort((a,b)=>(a.time_start||'')<(b.time_start||'')?-1:1);
-  const deadlines=tasks.filter(t=>['deadline','payment'].includes(t.type));
-  const regular=tasks.filter(t=>!['meeting','call','trip','deadline','payment'].includes(t.type)||(['meeting','call','trip'].includes(t.type)&&!t.time_start));
+  // Разделяем на задачи с временем и без
+  const timed=tasks.filter(t=>t.time_start).sort((a,b)=>(a.time_start||'')<(b.time_start||'')?-1:1);
+  const untimed=tasks.filter(t=>!t.time_start);
 
   let html='';
-  if(timed.length) { html+=`<div class="task-group"><div class="task-group-title">По времени</div>${timed.map(buildTaskCard).join('')}</div>`; }
-  if(deadlines.length) { html+=`<div class="task-group"><div class="task-group-title">Дедлайны и оплаты</div>${deadlines.map(buildTaskCard).join('')}</div>`; }
-  if(regular.length) {
-    const secs=[...new Set(regular.map(t=>t.section))];
-    secs.forEach(sec=>{
-      const items=regular.filter(t=>t.section===sec);
-      html+=`<div class="task-group"><div class="task-group-title">${SECTION_LABELS[sec]||sec}</div>${items.map(buildTaskCard).join('')}</div>`;
+
+  // ШКАЛА ВРЕМЕНИ
+  if(timed.length) {
+    const START_H=7, END_H=23, STEP=15; // 15 мин шаг
+    const totalMins=(END_H-START_H)*60;
+    const PX_PER_MIN=2; // 2px на минуту = 120px на час
+    const totalH=(END_H-START_H);
+
+    // Текущее время
+    const now=new Date();
+    const nowMins=now.getHours()*60+now.getMinutes()-START_H*60;
+    const isToday=state.filter.date==='today'||getFilteredDate()===todayStr();
+
+    html+=`<div class="timeline-wrap">
+      <div class="timeline-scale">`;
+
+    // Часовые метки
+    for(let h=START_H;h<=END_H;h++) {
+      const top=(h-START_H)*60*PX_PER_MIN;
+      html+=`<div class="tl-hour" style="top:${top}px">
+        <span class="tl-hour-label">${String(h).padStart(2,'0')}:00</span>
+        <div class="tl-hour-line"></div>
+      </div>`;
+      // 15-мин деления
+      if(h<END_H) {
+        [15,30,45].forEach(m=>{
+          const t2=(h-START_H)*60*PX_PER_MIN+m*PX_PER_MIN;
+          html+=`<div class="tl-quarter" style="top:${t2}px"><div class="tl-quarter-line ${m===30?'tl-half':''}"></div></div>`;
+        });
+      }
+    }
+
+    // Линия текущего времени
+    if(isToday && nowMins>=0 && nowMins<=totalMins) {
+      html+=`<div class="tl-now" style="top:${nowMins*PX_PER_MIN}px"><div class="tl-now-dot"></div><div class="tl-now-line"></div></div>`;
+    }
+
+    html+=`</div><div class="timeline-events" style="height:${totalH*60*PX_PER_MIN}px">`;
+
+    // Задачи на шкале
+    timed.forEach(task=>{
+      const startMins=timeToMins(task.time_start)-START_H*60;
+      const endMins=task.time_end?timeToMins(task.time_end)-START_H*60:startMins+60;
+      const top=Math.max(0,startMins*PX_PER_MIN);
+      const height=Math.max(30,(endMins-startMins)*PX_PER_MIN);
+      const isDone=task.status==='done';
+      const typeColor={task:'var(--ink)',meeting:'var(--c-projects)',call:'var(--green)',trip:'var(--blue)',deadline:'var(--brick)',payment:'var(--ochre)'}[task.type]||'var(--ink)';
+      const secColor=SECTION_COLORS[task.section]||'var(--ink3)';
+      const ctxLabel={task:'ЗАДАЧ',meeting:'ВСТР',call:'ЗВНК',trip:'ПОЕЗД',deadline:'ДЕДЛ',payment:'ОПЛТ'}[task.type]||'ЗАДАЧ';
+
+      html+=`<div class="tl-event ${isDone?'done':''}" style="top:${top}px;height:${height}px;border-left:3px solid ${typeColor}" data-id="${task.id}">
+        <div class="tl-event-time">${task.time_start.slice(0,5)}${task.time_end?'–'+task.time_end.slice(0,5):''}</div>
+        <div class="tl-event-title">${escHtml(task.title)}</div>
+        ${task.travel_time?`<div class="tl-event-travel">+${task.travel_time} мин дорога</div>`:''}
+        <div class="task-check tl-check ${isDone?'checked':''}" data-id="${task.id}">${isDone?'✓':''}</div>
+      </div>`;
     });
+
+    html+=`</div></div>`;
   }
+
+  // ЗАДАЧИ БЕЗ ВРЕМЕНИ
+  if(untimed.length) {
+    const deadlines=untimed.filter(t=>['deadline','payment'].includes(t.type));
+    const regular=untimed.filter(t=>!['deadline','payment'].includes(t.type));
+
+    if(deadlines.length) {
+      html+=`<div class="task-group"><div class="task-group-title">Дедлайны и оплаты</div>${deadlines.map(buildTaskCard).join('')}</div>`;
+    }
+    if(regular.length) {
+      const secs=[...new Set(regular.map(t=>t.section))];
+      secs.forEach(sec=>{
+        const items=regular.filter(t=>t.section===sec);
+        html+=`<div class="task-group"><div class="task-group-title">${SECTION_LABELS[sec]||sec}</div>${items.map(buildTaskCard).join('')}</div>`;
+      });
+    }
+  }
+
   groups.innerHTML=html;
 
+  // Events — шкала
+  groups.querySelectorAll('.tl-event').forEach(el=>{
+    el.addEventListener('click', e=>{ if(e.target.closest('.tl-check')||e.target.closest('.quick-add-sub')) return; openTaskModal(parseInt(el.dataset.id)); });
+  });
+  groups.querySelectorAll('.tl-check').forEach(el=>{
+    el.addEventListener('click', e=>{ e.stopPropagation(); toggleTask(parseInt(el.dataset.id)); });
+  });
+  // Events — карточки
   groups.querySelectorAll('.task-card').forEach(card=>{
-    card.addEventListener('click', e=>{ if(e.target.closest('.task-check')||e.target.closest('.subtask-check')) return; openTaskModal(parseInt(card.dataset.id)); });
+    card.addEventListener('click', e=>{ if(e.target.closest('.task-check')||e.target.closest('.subtask-check')||e.target.closest('.quick-add-sub')) return; openTaskModal(parseInt(card.dataset.id)); });
   });
   groups.querySelectorAll('.task-check[data-id]').forEach(el=>{
     el.addEventListener('click', e=>{ e.stopPropagation(); toggleTask(parseInt(el.dataset.id)); });
   });
   groups.querySelectorAll('.subtask-check[data-id]').forEach(el=>{
     el.addEventListener('click', e=>{ e.stopPropagation(); toggleSubtask(parseInt(el.dataset.id), el.dataset.taskId); });
+  });
+
+  // Быстрое добавление подзадачи
+  groups.querySelectorAll('[data-qa-open]').forEach(btn=>{
+    btn.addEventListener('click', e=>{ e.stopPropagation(); state.quickAddTaskId=parseInt(btn.dataset.qaOpen); renderTasks(); setTimeout(()=>document.getElementById('qa-inp-'+btn.dataset.qaOpen)?.focus(),50); });
+  });
+  groups.querySelectorAll('[data-qa-cancel]').forEach(btn=>{
+    btn.addEventListener('click', e=>{ e.stopPropagation(); state.quickAddTaskId=null; renderTasks(); });
+  });
+  groups.querySelectorAll('[data-qa-save]').forEach(btn=>{
+    btn.addEventListener('click', e=>{ e.stopPropagation(); quickAddSubtask(parseInt(btn.dataset.qaSave)); });
+  });
+  groups.querySelectorAll('.qa-input').forEach(inp=>{
+    inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){e.stopPropagation();quickAddSubtask(parseInt(inp.id.replace('qa-inp-','')))} if(e.key==='Escape'){state.quickAddTaskId=null;renderTasks();} });
   });
 }
 
@@ -343,6 +472,19 @@ function buildTaskCard(task) {
     <div class="task-progress-row"><div class="task-progress-bar"><div class="task-progress-fill" style="width:${subPct}%"></div></div><span class="task-progress-pct">${subPct}%</span></div>`;
   }
 
+  // Быстрое добавление подзадачи
+  const isQuickAdd = state.quickAddTaskId === task.id;
+  const quickAddHtml = !isDone ? `
+    <div class="quick-add-sub">
+      ${isQuickAdd ? `
+        <div class="qa-row">
+          <input type="text" class="qa-input" id="qa-inp-${task.id}" placeholder="Новый пункт...">
+          <button class="qa-ok" data-qa-save="${task.id}">+</button>
+          <button class="qa-cancel" data-qa-cancel="${task.id}">×</button>
+        </div>` : `
+        <button class="qa-btn" data-qa-open="${task.id}">+ пункт</button>`}
+    </div>` : '';
+
   return `<div class="task-card ${isDone?'done':''}" data-id="${task.id}">
     <div class="task-author-dot"><div class="task-avatar" style="background:${secColor}18;color:${secColor}">${currentProfile?.avatar_initials||'?'}</div></div>
     <div class="task-body">
@@ -363,6 +505,22 @@ function buildTaskCard(task) {
       <div class="task-check ${isDone?'checked':''}" data-id="${task.id}">${isDone?'✓':''}</div>
     </div>
   </div>`;
+}
+
+// ─── QUICK ADD SUBTASK ───────────────────────────────────────
+async function quickAddSubtask(taskId) {
+  const inp = document.getElementById('qa-inp-'+taskId);
+  if(!inp) return;
+  const title = inp.value.trim();
+  if(!title) { state.quickAddTaskId=null; renderTasks(); return; }
+  const order = (state.subtasks[taskId]||[]).length;
+  const {data,error} = await SB.from('bb_subtasks').insert({task_id:taskId,title,done:false,order_num:order}).select().single();
+  if(!error && data) {
+    if(!state.subtasks[taskId]) state.subtasks[taskId]=[];
+    state.subtasks[taskId].push(data);
+  }
+  state.quickAddTaskId=null;
+  renderTasks();
 }
 
 // ─── TOGGLE ───────────────────────────────────────────────────
@@ -542,7 +700,8 @@ function initModal() {
 }
 
 function openTaskModal(taskId) {
-  state.editingTaskId=taskId; state.formSubtasks=[];
+  state.editingTaskId=taskId;
+  state.formSubtasks=[];
   const projEl=document.getElementById('f-project');
   projEl.innerHTML=`<option value="">— без проекта —</option>`+state.projects.map(p=>`<option value="${p.id}">${escHtml(p.name)}</option>`).join('');
   const depsEl=document.getElementById('f-depends');
