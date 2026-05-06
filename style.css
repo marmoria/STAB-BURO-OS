@@ -1375,3 +1375,209 @@ html, body {
   padding: 20px 8px;
   letter-spacing: .06em;
 }
+
+/* ─── TIMELINE ───────────────────────────────────────────────── */
+.timeline-wrap {
+  display: flex;
+  gap: 0;
+  margin-bottom: 24px;
+  position: relative;
+}
+.timeline-scale {
+  width: 52px;
+  flex-shrink: 0;
+  position: relative;
+  border-right: 1px solid var(--ink);
+}
+.tl-hour {
+  position: absolute;
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+}
+.tl-hour-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--ink3);
+  letter-spacing: .04em;
+  padding-right: 6px;
+  line-height: 1;
+  margin-top: -1px;
+  width: 100%;
+  text-align: right;
+}
+.tl-hour-line {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 6px;
+  height: 1px;
+  background: var(--ink);
+  opacity: .4;
+}
+.tl-quarter {
+  position: absolute;
+  width: 100%;
+}
+.tl-quarter-line {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 4px;
+  height: 0.5px;
+  background: var(--ink);
+  opacity: .2;
+}
+.tl-quarter-line.tl-half {
+  width: 5px;
+  opacity: .3;
+}
+.tl-now {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  z-index: 3;
+}
+.tl-now-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--brick);
+  flex-shrink: 0;
+  margin-left: -3px;
+}
+.tl-now-line {
+  flex: 1;
+  height: 1px;
+  background: var(--brick);
+  opacity: .7;
+}
+
+.timeline-events {
+  flex: 1;
+  position: relative;
+  border-left: none;
+  /* горизонтальные линии часов */
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 119px,
+    var(--ink-faint) 119px,
+    var(--ink-faint) 120px
+  );
+}
+
+.tl-event {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  background: var(--paper);
+  border: 0.5px solid var(--border2);
+  border-radius: var(--rad);
+  padding: 4px 8px 4px 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  overflow: hidden;
+  transition: box-shadow .12s;
+  z-index: 2;
+}
+.tl-event:hover { box-shadow: var(--shadow); }
+.tl-event.done { opacity: .4; }
+.tl-event-time {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ink2);
+  letter-spacing: .03em;
+  white-space: nowrap;
+}
+.tl-event-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tl-event.done .tl-event-title { text-decoration: line-through; color: var(--ink3); }
+.tl-event-travel {
+  font-size: 9px;
+  color: var(--ink4);
+}
+.tl-check {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--border2);
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  cursor: pointer;
+  color: var(--paper);
+  background: transparent;
+  flex-shrink: 0;
+}
+.tl-check.checked { background: var(--brick); border-color: var(--brick); }
+
+/* ─── QUICK ADD SUBTASK ──────────────────────────────────────── */
+.quick-add-sub {
+  padding: 4px 14px 8px 42px;
+}
+.qa-btn {
+  background: transparent;
+  border: none;
+  font-family: var(--font);
+  font-size: 10px;
+  color: var(--ink4);
+  cursor: pointer;
+  padding: 2px 0;
+  letter-spacing: .04em;
+  transition: color .12s;
+}
+.qa-btn:hover { color: var(--brick); }
+.qa-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.qa-input {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--brick);
+  border-radius: var(--rad);
+  font-family: var(--font);
+  font-size: 11px;
+  color: var(--ink);
+  background: var(--paper2);
+  outline: none;
+}
+.qa-ok {
+  padding: 4px 8px;
+  background: var(--brick);
+  color: var(--paper);
+  border: none;
+  border-radius: var(--rad);
+  font-family: var(--font);
+  font-size: 12px;
+  cursor: pointer;
+}
+.qa-cancel {
+  padding: 4px 7px;
+  background: transparent;
+  border: 0.5px solid var(--border2);
+  border-radius: var(--rad);
+  font-family: var(--font);
+  font-size: 12px;
+  color: var(--ink3);
+  cursor: pointer;
+}
