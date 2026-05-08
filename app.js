@@ -163,7 +163,8 @@ async function loadTasks() {
 }
 
 async function loadProjects() {
-  const { data } = await SB.from('projects').select('id,name,color,stage,start_date,end_date,budget,area,notes,client,type').order('name');
+  const { data, error } = await SB.from('projects').select('*').order('name');
+  if(error) console.error('loadProjects error:', error);
   state.projects = data || [];
 }
 
@@ -863,8 +864,7 @@ function renderProjectDetail(page) {
 }
 
 function buildProjectModal(proj) {
-  if(!projectsState.editingProject && projectsState.editingProject !== null) return '';
-  if(projectsState.editingProject === null) return '';
+  if(projectsState.editingProject === null || projectsState.editingProject === undefined) return '';
   const p = projectsState.editingProject;
   const isNew = !p.id;
   const COLORS = ['#a84332','#534AB7','#185FA5','#1D9E75','#BA7517','#993C1D','#5F5E5A','#0f6e56'];
@@ -947,10 +947,13 @@ function bindProjectModal(page) {
     const p = projectsState.editingProject;
     if(p?.id) {
       const {error} = await SB.from('projects').update(data).eq('id',p.id);
-      if(!error) { const idx=state.projects.findIndex(x=>x.id===p.id); if(idx>=0) Object.assign(state.projects[idx],data); }
+      if(error) { console.error('Ошибка обновления проекта:', error); showToast('Ошибка: '+error.message,'error'); return; }
+      const idx=state.projects.findIndex(x=>x.id===p.id);
+      if(idx>=0) Object.assign(state.projects[idx],data);
     } else {
       const {data:saved,error} = await SB.from('projects').insert(data).select().single();
-      if(!error && saved) state.projects.push(saved);
+      if(error) { console.error('Ошибка создания проекта:', error); showToast('Ошибка: '+error.message,'error'); return; }
+      if(saved) state.projects.push(saved);
     }
     projectsState.editingProject = null;
     renderProjectsPage();
@@ -1615,7 +1618,18 @@ function buildTasksList(tasks) {
   let html='<div class="tl-list">';
   Object.entries(secs).forEach(([sec,items])=>{
     if(!items.length) return;
-    items.sort((a,b)=>(a.priority||3)-(b.priority||3));
+    items.sort((a,b)=>{
+      const td=todayStr();
+      const aOver=a.date_due&&a.date_due<td?0:1;
+      const bOver=b.date_due&&b.date_due<td?0:1;
+      if(aOver!==bOver) return aOver-bOver;
+      const pDiff=(a.priority||3)-(b.priority||3);
+      if(pDiff!==0) return pDiff;
+      if(a.date_due&&b.date_due) return a.date_due<b.date_due?-1:1;
+      if(a.date_due) return -1;
+      if(b.date_due) return 1;
+      return 0;
+    });
     html+=`<div class="tl-group"><div class="tl-group-title">${SECTION_LABELS[sec]||sec} <span class="tl-count">${items.length}</span></div>`;
     items.forEach(t=>{
       const isDone=t.status==='done', over=t.date_due&&t.date_due<todayStr()&&!isDone;
@@ -1644,32 +1658,97 @@ function buildTasksList(tasks) {
 
 function buildTasksKanban(tasks) {
   const cols=[
-    {id:'inbox',   label:'ВХОДЯЩИЕ', color:'var(--ochre)', filter:t=>(t.kanban_status||'inbox')==='inbox'&&t.status!=='done'},
-    {id:'active',  label:'В РАБОТЕ', color:'var(--blue)',  filter:t=>(t.kanban_status||'inbox')==='active'&&t.status!=='done'},
-    {id:'done',    label:'ВЫПОЛНЕНО',color:'var(--green)', filter:t=>t.status==='done'},
+    {id:'inbox',  label:'ВХОДЯЩИЕ', color:'var(--ochre)'},
+    {id:'active', label:'В РАБОТЕ', color:'var(--blue)'},
+    {id:'waiting',label:'ЖДЁМ',     color:'var(--plum)'},
+    {id:'done',   label:'ВЫПОЛНЕНО',color:'var(--green)'},
   ];
-  // drag state
-  let dragId = null;
-  return `<div class="kb-board">${cols.map(col=>{
-    const items=tasks.filter(col.filter);
-    return `<div class="kb-col">
-      <div class="kb-col-header"><div class="kb-col-dot" style="background:${col.color}"></div><span class="kb-col-title">${col.label}</span><span class="kb-col-cnt">${items.length}</span></div>
-      <div class="kb-col-body">
-        ${items.map(t=>{
-          const isDone=t.status==='done', secColor=SECTION_COLORS[t.section]||'var(--ink3)';
-          return `<div class="kb-card ${isDone?'done':''}" data-tid="${t.id}">
-            <div class="kb-card-bar" style="background:${secColor}"></div>
-            <div class="kb-card-body">
-              <div class="task-check ${isDone?'checked':''}" data-id="${t.id}">${isDone?'✓':''}</div>
-              <div class="kb-card-title ${isDone?'done':''}">${escHtml(t.title)}</div>
-            </div>
-            ${t.date_due?`<div class="kb-card-footer"><span class="tl-date" style="font-size:9px">${fmtDateShort(t.date_due)}</span></div>`:''}
-          </div>`;
-        }).join('')}
-        ${!items.length?`<div class="kb-empty">пусто</div>`:''}
+
+  function getCol(t) {
+    if(t.status==='done') return 'done';
+    return t.kanban_status||'inbox';
+  }
+
+  let html = '<div class="kb-board">';
+  cols.forEach(col => {
+    const items = tasks.filter(t=>getCol(t)===col.id);
+    html += `<div class="kb-col">
+      <div class="kb-col-header">
+        <div class="kb-col-dot" style="background:${col.color}"></div>
+        <span class="kb-col-title">${col.label}</span>
+        <span class="kb-col-cnt">${items.length}</span>
       </div>
-    </div>`;
-  }).join('')}</div>`;
+      <div class="kb-col-body" data-col="${col.id}" id="kbc-${col.id}"
+        ondragover="event.preventDefault();this.classList.add('kb-drag-over')"
+        ondragleave="this.classList.remove('kb-drag-over')"
+        ondrop="kbDrop(event,'${col.id}')">`;
+
+    items.forEach(t => {
+      const secColor = SECTION_COLORS[t.section]||'var(--ink3)';
+      const isDone = t.status==='done';
+      const over = t.date_due && t.date_due < todayStr() && !isDone;
+      html += `<div class="kb-card ${isDone?'done':''} ${over?'overdue':''}"
+          draggable="true"
+          data-tid="${t.id}"
+          ondragstart="kbDragStart(event,${t.id})"
+          ondragend="this.classList.remove('dragging')">
+        <div class="kb-card-bar" style="background:${secColor}"></div>
+        <div class="kb-card-body">
+          <div class="task-check ${isDone?'checked':''}" data-id="${t.id}">${isDone?'✓':''}</div>
+          <div class="kb-card-title ${isDone?'done':''}">${escHtml(t.title)}</div>
+        </div>
+        ${t.date_due?`<div class="kb-card-footer"><span class="tl-date ${over?'over':''}" style="font-size:9px">${fmtDateShort(t.date_due)}</span></div>`:''}
+      </div>`;
+    });
+
+    if(!items.length) html += '<div class="kb-empty">пусто</div>';
+    html += '</div></div>';
+  });
+  html += '</div>';
+  return html;
+}
+
+// Глобальные функции для drag&drop канбана
+let _kbDragId = null;
+window.kbDragStart = function(e, id) {
+  _kbDragId = id;
+  e.target.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+};
+window.kbDrop = async function(e, colId) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('kb-drag-over');
+  if(!_kbDragId) return;
+  const task = state.tasks.find(t=>t.id===_kbDragId);
+  if(!task) return;
+  const newStatus = colId==='done'?'done':'active';
+  task.kanban_status = colId;
+  task.status = newStatus;
+  await SB.from('bb_tasks').update({kanban_status:colId, status:newStatus}).eq('id',_kbDragId);
+  _kbDragId = null;
+  // Перерисовываем только канбан
+  const page = document.getElementById('page-tasks');
+  if(page) {
+    const content = document.getElementById('tp-content');
+    if(content) content.innerHTML = buildTasksKanban(getTasksPageFiltered());
+    bindKanbanCardClicks(page);
+  }
+};
+
+
+function bindKanbanCardClicks(page) {
+  page.querySelectorAll('.kb-card[data-tid]').forEach(el => {
+    el.addEventListener('click', e => {
+      if(e.target.closest('.task-check')) return;
+      openTaskModal(parseInt(el.dataset.tid));
+    });
+  });
+  page.querySelectorAll('.kb-card .task-check[data-id]').forEach(el => {
+    el.addEventListener('click', e => {
+      e.stopPropagation();
+      toggleTask(parseInt(el.dataset.id));
+    });
+  });
 }
 
 // ─── MODAL ────────────────────────────────────────────────────
