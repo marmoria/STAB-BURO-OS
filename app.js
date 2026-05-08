@@ -34,12 +34,14 @@ let profiles = {};
 
 let state = {
   tasks: [], subtasks: {}, projects: [],
+  instanceStatuses: {},   // taskId_date -> status
+  instanceSubtasks: {},   // subtaskId_date -> done(bool)
   filter: { date: 'today', section: 'all' },
   calMonth: new Date().getMonth(),
   calYear: new Date().getFullYear(),
   editingTaskId: null,
   formSubtasks: [],
-  quickAddTaskId: null, // для быстрого добавления подзадачи
+  quickAddTaskId: null,
 };
 
 let tasksState = {
@@ -142,7 +144,21 @@ async function loadTasks() {
       state.subtasks = {};
       subs.forEach(s=>{ if(!state.subtasks[s.task_id]) state.subtasks[s.task_id]=[]; state.subtasks[s.task_id].push(s); });
     }
-
+    // Статусы конкретных дней повторяющихся задач
+    const { data: tinst } = await SB.from('bb_task_instances').select('*').in('task_id', ids);
+    if(tinst) {
+      state.instanceStatuses = {};
+      tinst.forEach(i => { state.instanceStatuses[i.task_id+'_'+i.instance_date] = i.status; });
+    }
+    // Отметки подзадач по датам
+    const allSubIds = Object.values(state.subtasks).flat().map(s=>s.id);
+    if(allSubIds.length) {
+      const { data: sinst } = await SB.from('bb_subtask_instances').select('*').in('subtask_id', allSubIds);
+      if(sinst) {
+        state.instanceSubtasks = {};
+        sinst.forEach(i => { state.instanceSubtasks[i.subtask_id+'_'+i.instance_date] = i.done; });
+      }
+    }
   }
 }
 
@@ -428,7 +444,7 @@ function renderTasks() {
         <div class="tl-event-time">${task.time_start.slice(0,5)}${task.time_end?'–'+task.time_end.slice(0,5):''}</div>
         <div class="tl-event-title">${escHtml(task.title)}</div>
         ${task.travel_time?`<div class="tl-event-travel">+${task.travel_time} мин дорога</div>`:''}
-        <div class="task-check tl-check ${isDone?'checked':''}" data-id="${task.id}">${isDone?'✓':''}</div>
+        <div class="task-check tl-check ${isDone?'checked':''}" data-id="${task.id}" data-date="${curDate}">${isDone?'✓':''}</div>
       </div>`;
     });
 
@@ -459,17 +475,17 @@ function renderTasks() {
     el.addEventListener('click', e=>{ if(e.target.closest('.tl-check')||e.target.closest('.quick-add-sub')) return; openTaskModal(parseInt(el.dataset.id)); });
   });
   groups.querySelectorAll('.tl-check').forEach(el=>{
-    el.addEventListener('click', e=>{ e.stopPropagation(); toggleTask(parseInt(el.dataset.id)); });
+    el.addEventListener('click', e=>{ e.stopPropagation(); toggleTask(parseInt(el.dataset.id), el.dataset.date); });
   });
   // Events — карточки
   groups.querySelectorAll('.task-card').forEach(card=>{
     card.addEventListener('click', e=>{ if(e.target.closest('.task-check')||e.target.closest('.subtask-check')||e.target.closest('.quick-add-sub')) return; openTaskModal(parseInt(card.dataset.id)); });
   });
   groups.querySelectorAll('.task-check[data-id]').forEach(el=>{
-    el.addEventListener('click', e=>{ e.stopPropagation(); toggleTask(parseInt(el.dataset.id)); });
+    el.addEventListener('click', e=>{ e.stopPropagation(); toggleTask(parseInt(el.dataset.id), el.dataset.date); });
   });
   groups.querySelectorAll('.subtask-check[data-id]').forEach(el=>{
-    el.addEventListener('click', e=>{ e.stopPropagation(); toggleSubtask(parseInt(el.dataset.id), el.dataset.taskId); });
+    el.addEventListener('click', e=>{ e.stopPropagation(); toggleSubtask(parseInt(el.dataset.id), el.dataset.taskId, el.dataset.date); });
   });
 
   // Быстрое добавление подзадачи
@@ -488,10 +504,23 @@ function renderTasks() {
 }
 
 function buildTaskCard(task) {
-  const subs=state.subtasks[task.id]||[];
+  const dateStr = getFilteredDate() || todayStr();
+  const instKey = task.id+'_'+dateStr;
+  // Для повторяющихся — берём статус из instanceStatuses
+  const effectiveStatus = task.recurrence
+    ? (state.instanceStatuses[instKey] || 'active')
+    : task.status;
+  const rawSubs = state.subtasks[task.id]||[];
+  // Для повторяющихся — накладываем instanceSubtasks на базовые подзадачи
+  const subs = task.recurrence
+    ? rawSubs.map(s => {
+        const sk = s.id+'_'+dateStr;
+        return { ...s, done: state.instanceSubtasks[sk] !== undefined ? state.instanceSubtasks[sk] : s.done };
+      })
+    : rawSubs;
   const subDone=subs.filter(s=>s.done).length;
   const subPct=subs.length?Math.round(subDone/subs.length*100):null;
-  const isDone=task.status==='done', td_=todayStr();
+  const isDone=effectiveStatus==='done', td_=todayStr();
   const over=task.date_due&&task.date_due<td_&&!isDone;
   const secColor=SECTION_COLORS[task.section]||'var(--ink3)';
   const typeColor={task:'var(--ink)',meeting:'var(--c-projects)',call:'var(--green)',trip:'var(--blue)',deadline:'var(--brick)',payment:'var(--ochre)'}[task.type]||'var(--ink)';
@@ -539,7 +568,7 @@ function buildTaskCard(task) {
     <div class="task-right">
       <div class="prio-dots">${prioDots}</div>
       <div class="urg-tris">${urgTris}</div>
-      <div class="task-check ${isDone?'checked':''}" data-id="${task.id}">${isDone?'✓':''}</div>
+      <div class="task-check ${isDone?'checked':''}" data-id="${task.id}" data-date="${_curDate}">${isDone?'✓':''}</div>
     </div>
   </div>`;
 }
@@ -555,27 +584,102 @@ async function quickAddSubtask(taskId) {
   if(!error && data) {
     if(!state.subtasks[taskId]) state.subtasks[taskId]=[];
     state.subtasks[taskId].push(data);
+    showToast('Подзадача добавлена','success');
   }
   state.quickAddTaskId=null;
   renderTasks();
 }
 
+
+// ─── INSTANCE HELPERS ────────────────────────────────────────
+function getTaskStatus(task, dateStr) {
+  // Для повторяющихся — смотрим instance
+  if(task.recurrence && dateStr) {
+    const inst = state.taskInstances[task.id+'_'+dateStr];
+    if(inst) return inst.status;
+    return 'active'; // новый экземпляр — всегда активный
+  }
+  return task.status;
+}
+
+function getSubtaskDone(subtask, dateStr, task) {
+  if(task && task.recurrence && dateStr) {
+    const inst = state.subtaskInstances[subtask.id+'_'+dateStr];
+    if(inst !== undefined) return inst.done;
+    // Ищем последний выполненный instance до этой даты
+    // Подзадача считается невыполненной если нет instance или inst.done=false
+    return false;
+  }
+  return subtask.done;
+}
+
+async function setTaskInstance(taskId, dateStr, status) {
+  const key = taskId+'_'+dateStr;
+  const existing = state.taskInstances[key];
+  if(existing) {
+    await SB.from('bb_task_instances').update({status}).eq('id', existing.id);
+    state.taskInstances[key] = {...existing, status};
+  } else {
+    const {data} = await SB.from('bb_task_instances').insert({task_id:taskId, instance_date:dateStr, status}).select().single();
+    if(data) state.taskInstances[key] = data;
+  }
+}
+
+async function setSubtaskInstance(subtaskId, dateStr, done) {
+  const key = subtaskId+'_'+dateStr;
+  const existing = state.subtaskInstances[key];
+  if(existing) {
+    await SB.from('bb_subtask_instances').update({done}).eq('id', existing.id);
+    state.subtaskInstances[key] = {...existing, done};
+  } else {
+    const {data} = await SB.from('bb_subtask_instances').insert({subtask_id:subtaskId, instance_date:dateStr, done}).select().single();
+    if(data) state.subtaskInstances[key] = data;
+  }
+}
+
 // ─── TOGGLE ───────────────────────────────────────────────────
 async function toggleTask(id) {
   const task=state.tasks.find(t=>t.id===id); if(!task) return;
-  const ns=task.status==='done'?'active':'done'; task.status=ns;
-  await SB.from('bb_tasks').update({status:ns}).eq('id',id);
+  const dateStr = getFilteredDate() || todayStr();
+
+  if(task.recurrence) {
+    // Для повторяющихся — сохраняем статус только для этого дня
+    const key = id+'_'+dateStr;
+    const cur = state.instanceStatuses[key] || 'active';
+    const ns = cur==='done'?'active':'done';
+    state.instanceStatuses[key] = ns;
+    // Upsert в bb_task_instances
+    await SB.from('bb_task_instances').upsert({task_id:id, instance_date:dateStr, status:ns}, {onConflict:'task_id,instance_date'});
+  } else {
+    const ns=task.status==='done'?'active':'done'; task.status=ns;
+    await SB.from('bb_tasks').update({status:ns}).eq('id',id);
+  }
   renderTasks();
 }
 
 async function toggleSubtask(subId, taskId) {
-  const subs=state.subtasks[parseInt(taskId)]||[];
-  const sub=subs.find(s=>s.id===subId); if(!sub) return;
-  sub.done=!sub.done;
-  await SB.from('bb_subtasks').update({done:sub.done}).eq('id',subId);
-  const allDone=subs.every(s=>s.done);
-  const task=state.tasks.find(t=>t.id===parseInt(taskId));
-  if(task) { if(allDone){task.status='done';await SB.from('bb_tasks').update({status:'done'}).eq('id',taskId);} else if(task.status==='done'){task.status='active';await SB.from('bb_tasks').update({status:'active'}).eq('id',taskId);} }
+  const tid = parseInt(taskId);
+  const task = state.tasks.find(t=>t.id===tid);
+  const subs = state.subtasks[tid]||[];
+  const sub = subs.find(s=>s.id===subId); if(!sub) return;
+  const dateStr = getFilteredDate() || todayStr();
+
+  if(task?.recurrence) {
+    // Для повторяющихся — сохраняем отметку только для этого дня
+    const key = subId+'_'+dateStr;
+    const cur = state.instanceSubtasks[key] !== undefined ? state.instanceSubtasks[key] : sub.done;
+    const nd = !cur;
+    state.instanceSubtasks[key] = nd;
+    await SB.from('bb_subtask_instances').upsert({subtask_id:subId, instance_date:dateStr, done:nd}, {onConflict:'subtask_id,instance_date'});
+  } else {
+    sub.done = !sub.done;
+    await SB.from('bb_subtasks').update({done:sub.done}).eq('id',subId);
+    const allDone = subs.every(s=>s.done);
+    if(task) {
+      if(allDone){task.status='done';await SB.from('bb_tasks').update({status:'done'}).eq('id',tid);}
+      else if(task.status==='done'){task.status='active';await SB.from('bb_tasks').update({status:'active'}).eq('id',tid);}
+    }
+  }
   renderTasks();
 }
 
@@ -1058,7 +1162,7 @@ const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 let goalsState = {
   editingGoal: null,
   chatGoalId: null,
-  chatMessages: [],
+  chatHistory: {}, // goalId -> messages[]
   aiLoading: false,
   apiKey: localStorage.getItem('bb-ai-key') || '',
 };
@@ -1113,9 +1217,11 @@ function renderGoalsPage() {
         if(e.target.closest('.goal-btn')) return;
         const id = parseInt(el.dataset.goalId);
         goalsState.chatGoalId = id;
-        goalsState.chatMessages = [];
         renderGoalsPage();
-        if(goalsState.apiKey) setTimeout(() => startGoalChat(id), 100);
+        // Начинаем новый диалог только если истории нет
+        if(goalsState.apiKey && !goalsState.chatHistory[id]?.length) {
+          setTimeout(() => startGoalChat(id), 100);
+        }
       });
     });
     page.querySelectorAll('[data-edit-goal]').forEach(btn => {
@@ -1190,9 +1296,13 @@ function buildGoalChat(goalId) {
   let html = '<div class="goal-chat-panel" id="goal-chat">';
   html += '<div class="gcp-header"><div class="gcp-title">✦ Claude помогает с целью</div>';
   html += '<div class="gcp-goal-name">'+escHtml(g.title)+'</div>';
-  html += '<button class="gsp-close" id="gcp-close">✕</button></div>';
+  html += '<div style="display:flex;gap:6px;margin-top:8px">';
+  html += '<button class="btn-secondary" id="gcp-new" style="font-size:10px;padding:4px 10px">Новый диалог</button>';
+  html += '<button class="gsp-close" id="gcp-close" style="margin-left:auto">✕</button>';
+  html += '</div></div>';
   html += '<div class="gcp-messages" id="gcp-messages">';
-  goalsState.chatMessages.forEach(m => {
+  const msgs = goalsState.chatHistory[goalId] || [];
+  msgs.forEach(m => {
     html += '<div class="gcp-msg '+m.role+'">';
     html += '<div class="gcp-msg-label">'+(m.role==='user'?'Вы':'Claude ✦')+'</div>';
     html += '<div class="gcp-msg-text">'+(m.role==='assistant'?m.content.replace(/\n/g,'<br>'):escHtml(m.content))+'</div>';
@@ -1208,7 +1318,7 @@ function buildGoalChat(goalId) {
     }
     html += '</div>';
   });
-  if(goalsState.aiLoading) {
+  if(goalsState.aiLoading && goalsState.chatGoalId === goalId) {
     html += '<div class="gcp-msg assistant"><div class="gcp-msg-label">Claude ✦</div><div class="gcp-typing"><span></span><span></span><span></span></div></div>';
   }
   html += '</div>';
@@ -1218,7 +1328,13 @@ function buildGoalChat(goalId) {
 }
 
 function bindGoalChat(page) {
-  page.querySelector('#gcp-close')?.addEventListener('click', () => { goalsState.chatGoalId=null; goalsState.chatMessages=[]; renderGoalsPage(); });
+  page.querySelector('#gcp-close')?.addEventListener('click', () => { goalsState.chatGoalId=null; renderGoalsPage(); });
+  page.querySelector('#gcp-new')?.addEventListener('click', () => {
+    const id = goalsState.chatGoalId;
+    goalsState.chatHistory[id] = [];
+    renderGoalsPage();
+    if(goalsState.apiKey) setTimeout(() => startGoalChat(id), 100);
+  });
   page.querySelector('#gcp-send')?.addEventListener('click', sendGoalMessage);
   page.querySelector('#gcp-input')?.addEventListener('keydown', e => { if(e.key==='Enter') sendGoalMessage(); });
   page.querySelector('#btn-create-tasks')?.addEventListener('click', createTasksFromChat);
@@ -1238,8 +1354,9 @@ async function startGoalChat(goalId) {
     + 'Цель: "' + g.title + '"' + (g.deadline ? '\nДедлайн: ' + g.deadline : '') + (g.notes ? '\nКонтекст: ' + g.notes : '')
     + (steps.length ? '\nЗапланировано шагов: ' + steps.length : '');
 
-  goalsState.chatMessages = [{ role:'user', content:'Помоги достичь цели: "'+g.title+'"'+(g.deadline?' к '+g.deadline:'') }];
-  await callGoalAI(systemPrompt);
+  if(!goalsState.chatHistory[goalId]) goalsState.chatHistory[goalId] = [];
+  goalsState.chatHistory[goalId] = [{ role:'user', content:'Помоги достичь цели: "'+g.title+'"'+(g.deadline?' к '+g.deadline:'') }];
+  await callGoalAI(systemPrompt, goalId);
 }
 
 async function sendGoalMessage() {
@@ -1255,7 +1372,7 @@ async function sendGoalMessage() {
   await callGoalAI(sys);
 }
 
-async function callGoalAI(systemPrompt) {
+async function callGoalAI(systemPrompt, goalId) {
   if(!goalsState.apiKey) { showToast('Нет API ключа Claude','error'); return; }
   goalsState.aiLoading = true;
   renderGoalsPage();
@@ -1275,7 +1392,7 @@ async function callGoalAI(systemPrompt) {
         model:'claude-sonnet-4-20250514',
         max_tokens:1000,
         system: systemPrompt,
-        messages: goalsState.chatMessages.map(m=>({role:m.role,content:m.content})),
+        messages: (goalsState.chatHistory[goalId]||[]).map(m=>({role:m.role,content:m.content})),
       })
     });
     const data = await resp.json();
@@ -1283,9 +1400,11 @@ async function callGoalAI(systemPrompt) {
     let tasks = null, displayText = text;
     const m = text.match(/TASKS_JSON:(\[[\s\S]*?\])/);
     if(m) { try { tasks=JSON.parse(m[1]); displayText=text.replace(/TASKS_JSON:[\s\S]*?\]/, '').trim(); } catch(e){} }
-    goalsState.chatMessages.push({ role:'assistant', content:displayText, tasks });
+    if(!goalsState.chatHistory[goalId]) goalsState.chatHistory[goalId]=[];
+    goalsState.chatHistory[goalId].push({ role:'assistant', content:displayText, tasks });
   } catch(err) {
-    goalsState.chatMessages.push({ role:'assistant', content:'Ошибка: '+err.message });
+    if(!goalsState.chatHistory[goalId]) goalsState.chatHistory[goalId]=[];
+    goalsState.chatHistory[goalId].push({ role:'assistant', content:'Ошибка: '+err.message });
   }
   goalsState.aiLoading = false;
   renderGoalsPage();
@@ -1294,9 +1413,10 @@ async function callGoalAI(systemPrompt) {
 }
 
 async function createTasksFromChat() {
-  const last = [...goalsState.chatMessages].reverse().find(m=>m.tasks);
+  const goalId2 = goalsState.chatGoalId;
+  const last = [...(goalsState.chatHistory[goalId2]||[])].reverse().find(m=>m.tasks);
   if(!last?.tasks) return;
-  const goalId = goalsState.chatGoalId;
+  const goalId = goalId2;
   let created = 0;
   for(const t of last.tasks) {
     // Создаём задачу
@@ -1326,7 +1446,6 @@ async function createTasksFromChat() {
     }
   }
   showToast('Создано '+created+' задач','success');
-  last.tasks=null;
   renderGoalsPage();
 }
 
@@ -1525,10 +1644,12 @@ function buildTasksList(tasks) {
 
 function buildTasksKanban(tasks) {
   const cols=[
-    {id:'incoming',label:'ВХОДЯЩИЕ',color:'var(--ochre)',filter:t=>t.type==='incoming'},
-    {id:'active',label:'В РАБОТЕ',color:'var(--blue)',filter:t=>t.status==='active'&&t.type!=='incoming'},
-    {id:'done',label:'ВЫПОЛНЕНО',color:'var(--green)',filter:t=>t.status==='done'},
+    {id:'inbox',   label:'ВХОДЯЩИЕ', color:'var(--ochre)', filter:t=>(t.kanban_status||'inbox')==='inbox'&&t.status!=='done'},
+    {id:'active',  label:'В РАБОТЕ', color:'var(--blue)',  filter:t=>(t.kanban_status||'inbox')==='active'&&t.status!=='done'},
+    {id:'done',    label:'ВЫПОЛНЕНО',color:'var(--green)', filter:t=>t.status==='done'},
   ];
+  // drag state
+  let dragId = null;
   return `<div class="kb-board">${cols.map(col=>{
     const items=tasks.filter(col.filter);
     return `<div class="kb-col">
@@ -1700,7 +1821,7 @@ async function saveTask() {
     if(error) { console.error('update error:',error); showToast('Ошибка: '+error.message,'error'); btn.disabled=false; return; }
     const idx=state.tasks.findIndex(t=>t.id===taskId); if(idx>=0) Object.assign(state.tasks[idx],taskData);
   } else {
-    const {data,error}=await SB.from('bb_tasks').insert({...taskData,status:'active'}).select().single();
+    const {data,error}=await SB.from('bb_tasks').insert({...taskData,status:'active',kanban_status:'inbox'}).select().single();
     if(error) { console.error('insert error:',error); showToast('Ошибка: '+error.message,'error'); btn.disabled=false; return; }
     taskId=data.id; state.tasks.unshift(data);
   }
