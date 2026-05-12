@@ -506,40 +506,39 @@ function renderTasks() {
 
 function buildTaskCard(task) {
   const dateStr = getFilteredDate() || todayStr();
-  const instKey = task.id+'_'+dateStr;
-  // Для повторяющихся — берём статус из instanceStatuses
-  const effectiveStatus = task.recurrence
-    ? (state.instanceStatuses[instKey] || 'active')
-    : task.status;
-  const rawSubs = state.subtasks[task.id]||[];
-  // Для повторяющихся — накладываем instanceSubtasks на базовые подзадачи
-  const subs = task.recurrence
-    ? rawSubs.map(s => {
-        const sk = s.id+'_'+dateStr;
-        return { ...s, done: state.instanceSubtasks[sk] !== undefined ? state.instanceSubtasks[sk] : s.done };
-      })
-    : rawSubs;
-  const subDone=subs.filter(s=>s.done).length;
-  const subPct=subs.length?Math.round(subDone/subs.length*100):null;
-  const isDone=effectiveStatus==='done', td_=todayStr();
-  const over=task.date_due&&task.date_due<td_&&!isDone;
-  const secColor=SECTION_COLORS[task.section]||'var(--ink3)';
-  const typeColor={task:'var(--ink)',meeting:'var(--c-projects)',call:'var(--green)',trip:'var(--blue)',deadline:'var(--brick)',payment:'var(--ochre)'}[task.type]||'var(--ink)';
-  const ctxLabel={task:'ЗАДАЧ',meeting:'ВСТР',call:'ЗВНК',trip:'ПОЕЗД',deadline:'ДЕДЛ',payment:'ОПЛТ'}[task.type]||'ЗАДАЧ';
-  const prioDots=[1,2,3].map(i=>`<div class="prio-dot ${i<=(task.priority||2)?'filled':''}"></div>`).join('');
-  const urgTris=[1,2,3].map(i=>`<div class="urg-tri ${i<=(task.urgency||2)?'filled':''}"></div>`).join('');
+  const subs = state.subtasks[task.id] || [];
 
-  let subsHtml='';
-  if(subs.length&&!isDone) {
-    subsHtml=`<div class="task-subtasks">${subs.map(s=>`
+  // Статус задачи — для повторяющихся берём из instances
+  const instStatus = task.recurrence ? (state.taskInstances[task.id+'_'+dateStr]?.status || 'active') : task.status;
+  const isDone = instStatus === 'done';
+
+  // Подзадачи — для повторяющихся берём состояние из subtaskInstances
+  const subsWithState = task.recurrence
+    ? subs.map(s => {
+        const inst = state.subtaskInstances[s.id+'_'+dateStr];
+        return { ...s, done: inst ? inst.done : false };
+      })
+    : subs;
+
+  const subDone = subsWithState.filter(s=>s.done).length;
+  const subPct = subsWithState.length ? Math.round(subDone/subsWithState.length*100) : null;
+  const td_ = todayStr();
+  const over = task.date_due && task.date_due < td_ && !isDone;
+  const secColor = SECTION_COLORS[task.section] || 'var(--ink3)';
+  const ctxLabel = {task:'ЗАДАЧ',meeting:'ВСТР',call:'ЗВНК',trip:'ПОЕЗД',deadline:'ДЕДЛ',payment:'ОПЛТ'}[task.type]||'ЗАДАЧ';
+  const prioDots = [1,2,3].map(i=>`<div class="prio-dot ${i<=(task.priority||2)?'filled':''}"></div>`).join('');
+  const urgTris = [1,2,3].map(i=>`<div class="urg-tri ${i<=(task.urgency||2)?'filled':''}"></div>`).join('');
+
+  let subsHtml = '';
+  if(subsWithState.length && !isDone) {
+    subsHtml = `<div class="task-subtasks">${subsWithState.map(s=>`
       <div class="subtask-row">
-        <div class="subtask-check ${s.done?'checked':''}" data-id="${s.id}" data-task-id="${task.id}">${s.done?'✓':''}</div>
+        <div class="subtask-check ${s.done?'checked':''}" data-id="${s.id}" data-task-id="${task.id}" data-date="${dateStr}">${s.done?'✓':''}</div>
         <span class="subtask-title ${s.done?'done':''}">${escHtml(s.title)}</span>
       </div>`).join('')}</div>
     <div class="task-progress-row"><div class="task-progress-bar"><div class="task-progress-fill" style="width:${subPct}%"></div></div><span class="task-progress-pct">${subPct}%</span></div>`;
   }
 
-  // Быстрое добавление подзадачи
   const isQuickAdd = state.quickAddTaskId === task.id;
   const quickAddHtml = !isDone ? `
     <div class="quick-add-sub">
@@ -565,14 +564,16 @@ function buildTaskCard(task) {
         ${task.date_due&&state.filter.date!=='today'&&state.filter.date!==task.date_due?`<span class="task-date-badge ${over?'overdue':''}">${over?'⚠ ':''}${fmtDateShort(task.date_due)}</span>`:''}
       </div>
       ${subsHtml}
+      ${quickAddHtml}
     </div>
     <div class="task-right">
       <div class="prio-dots">${prioDots}</div>
       <div class="urg-tris">${urgTris}</div>
-      <div class="task-check ${isDone?'checked':''}" data-id="${task.id}" data-date="${_curDate}">${isDone?'✓':''}</div>
+      <div class="task-check ${isDone?'checked':''}" data-id="${task.id}" data-date="${dateStr}">${isDone?'✓':''}</div>
     </div>
   </div>`;
 }
+
 
 // ─── QUICK ADD SUBTASK ───────────────────────────────────────
 async function quickAddSubtask(taskId) {
