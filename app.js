@@ -36,6 +36,8 @@ let state = {
   tasks: [], subtasks: {}, projects: [],
   instanceStatuses: {},   // taskId_date -> status
   instanceSubtasks: {},   // subtaskId_date -> done(bool)
+  taskInstances: {},      // алиас для совместимости
+  subtaskInstances: {},   // алиас для совместимости
   filter: { date: 'today', section: 'all' },
   calMonth: new Date().getMonth(),
   calYear: new Date().getFullYear(),
@@ -509,14 +511,14 @@ function buildTaskCard(task) {
   const subs = state.subtasks[task.id] || [];
 
   // Статус задачи — для повторяющихся берём из instances
-  const instStatus = task.recurrence ? (state.taskInstances[task.id+'_'+dateStr]?.status || 'active') : task.status;
+  const instStatus = task.recurrence ? (state.instanceStatuses[task.id+'_'+dateStr] || (task.status==='done'?'done':'active')) : task.status;
   const isDone = instStatus === 'done';
 
   // Подзадачи — для повторяющихся берём состояние из subtaskInstances
   const subsWithState = task.recurrence
     ? subs.map(s => {
-        const inst = state.subtaskInstances[s.id+'_'+dateStr];
-        return { ...s, done: inst ? inst.done : false };
+        const inst = state.instanceSubtasks[s.id+'_'+dateStr];
+        return { ...s, done: inst !== undefined ? inst : false };
       })
     : subs;
 
@@ -595,48 +597,36 @@ async function quickAddSubtask(taskId) {
 
 // ─── INSTANCE HELPERS ────────────────────────────────────────
 function getTaskStatus(task, dateStr) {
-  // Для повторяющихся — смотрим instance
   if(task.recurrence && dateStr) {
-    const inst = state.taskInstances[task.id+'_'+dateStr];
-    if(inst) return inst.status;
-    return 'active'; // новый экземпляр — всегда активный
+    const s = state.instanceStatuses[task.id+'_'+dateStr];
+    return s || 'active';
   }
   return task.status;
 }
 
 function getSubtaskDone(subtask, dateStr, task) {
   if(task && task.recurrence && dateStr) {
-    const inst = state.subtaskInstances[subtask.id+'_'+dateStr];
-    if(inst !== undefined) return inst.done;
-    // Ищем последний выполненный instance до этой даты
-    // Подзадача считается невыполненной если нет instance или inst.done=false
-    return false;
+    const v = state.instanceSubtasks[subtask.id+'_'+dateStr];
+    return v !== undefined ? v : false;
   }
   return subtask.done;
 }
 
 async function setTaskInstance(taskId, dateStr, status) {
   const key = taskId+'_'+dateStr;
-  const existing = state.taskInstances[key];
-  if(existing) {
-    await SB.from('bb_task_instances').update({status}).eq('id', existing.id);
-    state.taskInstances[key] = {...existing, status};
-  } else {
-    const {data} = await SB.from('bb_task_instances').insert({task_id:taskId, instance_date:dateStr, status}).select().single();
-    if(data) state.taskInstances[key] = data;
-  }
+  state.instanceStatuses[key] = status;
+  // Upsert в базу
+  const {data} = await SB.from('bb_task_instances')
+    .upsert({task_id:taskId, instance_date:dateStr, status}, {onConflict:'task_id,instance_date'})
+    .select().single();
+  if(data) state.taskInstances[key] = data;
 }
 
 async function setSubtaskInstance(subtaskId, dateStr, done) {
   const key = subtaskId+'_'+dateStr;
-  const existing = state.subtaskInstances[key];
-  if(existing) {
-    await SB.from('bb_subtask_instances').update({done}).eq('id', existing.id);
-    state.subtaskInstances[key] = {...existing, done};
-  } else {
-    const {data} = await SB.from('bb_subtask_instances').insert({subtask_id:subtaskId, instance_date:dateStr, done}).select().single();
-    if(data) state.subtaskInstances[key] = data;
-  }
+  state.instanceSubtasks[key] = done;
+  await SB.from('bb_subtask_instances')
+    .upsert({subtask_id:subtaskId, instance_date:dateStr, done}, {onConflict:'subtask_id,instance_date'});
 }
 
 // ─── TOGGLE ───────────────────────────────────────────────────
