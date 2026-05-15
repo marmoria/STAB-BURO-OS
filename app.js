@@ -106,40 +106,35 @@ function initAuth() {
 }
 
 function renderAuthScreen() {
-  // Показываем выбор пользователя
   const authCard = document.querySelector('.auth-card');
   if(!authCard) return;
 
-  authCard.innerHTML = \`
-    <div class="auth-logo">
-      <span class="auth-logo-brick">BRICK</span><span class="auth-logo-buro">BURO</span>
-      <div class="auth-logo-sub">ШТАБ</div>
-    </div>
-    <div id="auth-error" class="auth-error hidden"></div>
-    <div class="auth-user-select">
-      \${USERS.map(u => \`
-        <button class="auth-user-btn" data-user-id="\${u.id}">
-          <div class="auth-user-avatar" style="background:\${u.color}">\${u.avatar}</div>
-          <span>\${u.name}</span>
-        </button>
-      \`).join('')}
-    </div>
-    <div id="auth-pw-wrap" style="display:none">
-      <div class="auth-selected-user" id="auth-selected-name"></div>
-      <div class="auth-form">
-        <div class="field-wrap">
-          <label class="field-label">Пароль</label>
-          <input type="password" id="auth-password" class="field-input" placeholder="••••••••" autocomplete="current-password" autofocus>
-        </div>
-        <button id="auth-submit" class="btn-primary auth-submit">
-          <span id="auth-btn-text">Войти</span>
-          <span id="auth-btn-spin" class="btn-spinner hidden"></span>
-        </button>
-      </div>
-      <button class="auth-back-btn" id="auth-back">← Назад</button>
-    </div>
-    <div class="auth-hint">Только для команды BrickBuro</div>
-  \`;
+  let html = '';
+  html += '<div class="auth-logo">';
+  html += '<span class="auth-logo-brick">BRICK</span><span class="auth-logo-buro">BURO</span>';
+  html += '<div class="auth-logo-sub">ШТАБ</div></div>';
+  html += '<div id="auth-error" class="auth-error hidden"></div>';
+  html += '<div class="auth-user-select">';
+  USERS.forEach(u => {
+    html += '<button class="auth-user-btn" data-user-id="'+u.id+'">';
+    html += '<div class="auth-user-avatar" style="background:'+u.color+'">'+u.avatar+'</div>';
+    html += '<span>'+u.name+'</span></button>';
+  });
+  html += '</div>';
+  html += '<div id="auth-pw-wrap" style="display:none">';
+  html += '<div class="auth-selected-user" id="auth-selected-name"></div>';
+  html += '<div class="auth-form">';
+  html += '<div class="field-wrap"><label class="field-label">Пароль</label>';
+  html += '<input type="password" id="auth-password" class="field-input" placeholder="••••••••" autocomplete="current-password"></div>';
+  html += '<button id="auth-submit" class="btn-primary auth-submit">';
+  html += '<span id="auth-btn-text">Войти</span>';
+  html += '<span id="auth-btn-spin" class="btn-spinner hidden"></span></button>';
+  html += '</div>';
+  html += '<button class="auth-back-btn" id="auth-back">← Назад</button>';
+  html += '</div>';
+  html += '<div class="auth-hint">Только для команды BrickBuro</div>';
+
+  authCard.innerHTML = html;
 
   let selectedUserId = null;
 
@@ -165,6 +160,7 @@ function renderAuthScreen() {
     if(e.key === 'Enter') doAuth(selectedUserId);
   });
 }
+
 
 function setCurrentUser(user) {
   currentUser = { id: user.id, email: user.id + '@brickburo.com' };
@@ -752,289 +748,394 @@ async function toggleSubtask(subId, taskId) {
 
 // ─── PROJECTS PAGE ────────────────────────────────────────────
 const DESIGN_STAGES = [
-  {id:'brief',      label:'Бриф',          color:'var(--ink3)'},
-  {id:'concept',    label:'Концепция',     color:'var(--c-projects)'},
-  {id:'approval',   label:'Согласование',  color:'var(--ochre)'},
-  {id:'docs',       label:'Документация',  color:'var(--blue)'},
-  {id:'supervision',label:'Надзор',        color:'var(--green)'},
-  {id:'done',       label:'Сдан',          color:'var(--ink4)'},
+  {id:'brief',      label:'Бриф'},
+  {id:'concept',    label:'Концепция'},
+  {id:'approval',   label:'Согласование'},
+  {id:'docs',       label:'Документация'},
+  {id:'supervision',label:'Надзор'},
+  {id:'done',       label:'Сдан'},
 ];
 
+const PROJECT_TYPES = ['HoReCa','Retail','База отдыха','Офис/БЦ','Жильё','Благоустройство','Внутренний','Другое'];
+const PROJ_COLORS = ['#a84332','#534AB7','#185FA5','#1D9E75','#BA7517','#993C1D','#5F5E5A','#0f6e56'];
+
 let projectsState = {
-  view: 'board',    // 'board' | 'list'
-  selectedId: null, // открытый проект
+  selectedId: null,
   editingProject: null,
+  taskView: 'list', // 'list' | 'kanban'
 };
 
 function renderProjectsPage() {
   const page = document.getElementById('page-projects');
   if(!page || !page.classList.contains('active')) return;
   try {
-    if(projectsState.selectedId) {
-      renderProjectDetail(page);
-    } else {
-      renderProjectsList(page);
-    }
+    if(projectsState.selectedId) renderProjectDetail(page);
+    else renderProjectsBoard(page);
   } catch(err) {
     console.error('renderProjectsPage:', err);
-    page.innerHTML = `<div class="page-stub"><div class="stub-icon">!</div><div class="stub-label">Ошибка: ${err.message}</div></div>`;
+    page.innerHTML = '<div class="page-stub"><div class="stub-label">Ошибка: '+err.message+'</div></div>';
   }
 }
 
-function renderProjectsList(page) {
-  const projects = state.projects;
-  page.innerHTML = `
-    <div class="tp-header">
-      <div class="tp-title">ПРОЕКТЫ</div>
-      <div class="tp-stats"><span>${projects.length} проектов</span></div>
-      <button class="btn-add-task" id="btn-add-proj">+ ПРОЕКТ</button>
-    </div>
-    <div class="proj-list-wrap">
-      ${projects.length ? projects.map(p => buildProjectCard(p)).join('') :
-        `<div class="empty-state"><div class="empty-icon">▤</div><div class="empty-text">Нет проектов. Добавьте первый.</div></div>`}
-    </div>
-    ${buildProjectModal()}
-  `;
+// ── BOARD VIEW ────────────────────────────────────────────────
+function renderProjectsBoard(page) {
+  const projects = (state.projects||[]).filter(p=>p.status!=='archived');
 
-  page.querySelector('#btn-add-proj')?.addEventListener('click', () => {
-    projectsState.editingProject = {};
-    renderProjectsPage();
-  });
-  page.querySelectorAll('[data-proj-id]').forEach(el => {
-    el.addEventListener('click', e => {
-      if(e.target.closest('.proj-edit-btn')) return;
-      projectsState.selectedId = parseInt(el.dataset.projId);
-      renderProjectsPage();
-    });
-  });
-  page.querySelectorAll('.proj-edit-btn').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const p = state.projects.find(x => x.id === parseInt(btn.dataset.editProj));
-      projectsState.editingProject = p ? {...p} : {};
-      renderProjectsPage();
-    });
-  });
-  bindProjectModal(page);
+  let html = '<div class="tp-header">';
+  html += '<div class="tp-title">ПРОЕКТЫ</div>';
+  html += '<div class="tp-stats"><span>'+projects.length+' проектов</span></div>';
+  html += '<button class="btn-add-task" id="btn-add-proj">+ ПРОЕКТ</button>';
+  html += '</div>';
+
+  if(!projects.length) {
+    html += '<div class="empty-state"><div class="empty-icon">▤</div><div class="empty-text">Нет проектов. Добавьте первый.</div></div>';
+  } else {
+    html += '<div class="proj-board">';
+    projects.forEach(p => { html += buildProjectColumn(p); });
+    // Колонка добавления нового проекта
+    html += '<div class="proj-col proj-col-new"><button class="proj-new-col-btn" id="btn-add-proj-2">+ Новый проект</button></div>';
+    html += '</div>';
+  }
+
+  if(projectsState.editingProject !== null) html += buildProjectModal();
+  page.innerHTML = html;
+  bindProjectsBoard(page);
+  if(projectsState.editingProject !== null) bindProjectModal(page);
 }
 
-function buildProjectCard(p) {
-  const tasks = state.tasks.filter(t => t.project_id === p.id);
-  const done = tasks.filter(t => t.status === 'done').length;
-  const pct = tasks.length ? Math.round(done/tasks.length*100) : 0;
-  const stage = p.stage || 'brief';
-  const stageLabel = DESIGN_STAGES.find(s=>s.id===stage)?.label || stage;
-  const stageColor = DESIGN_STAGES.find(s=>s.id===stage)?.color || 'var(--ink3)';
+function buildProjectColumn(p) {
+  const tasks = (state.tasks||[]).filter(t=>t.project_id===p.id && t.status!=='done');
+  const doneTasks = (state.tasks||[]).filter(t=>t.project_id===p.id && t.status==='done');
+  const total = tasks.length + doneTasks.length;
+  const pct = total ? Math.round(doneTasks.length/total*100) : 0;
+  const color = p.color || '#a84332';
   const over = p.end_date && p.end_date < todayStr();
+  const stageLabel = DESIGN_STAGES.find(s=>s.id===(p.stage||'brief'))?.label||'Бриф';
 
-  return `<div class="proj-card" data-proj-id="${p.id}">
-    <div class="proj-card-accent" style="background:${p.color||'var(--brick)'}"></div>
-    <div class="proj-card-body">
-      <div class="proj-card-header">
-        <div class="proj-card-name">${escHtml(p.name)}</div>
-        <button class="proj-edit-btn" data-edit-proj="${p.id}">···</button>
-      </div>
-      ${p.client ? `<div class="proj-card-client">${escHtml(p.client)}</div>` : ''}
-      <div class="proj-card-meta">
-        <span class="proj-stage-badge" style="color:${stageColor};border-color:${stageColor}22;background:${stageColor}10">${stageLabel}</span>
-        ${p.end_date ? `<span class="proj-date ${over?'over':''}">${over?'⚠ ':''}до ${fmtDateShort(p.end_date)}</span>` : ''}
-        ${p.area ? `<span class="proj-area">${p.area} м²</span>` : ''}
-      </div>
-      ${tasks.length ? `
-        <div class="proj-progress-row">
-          <div class="proj-progress-bar"><div class="proj-progress-fill" style="width:${pct}%;background:${p.color||'var(--brick)'}"></div></div>
-          <span class="proj-pct">${done}/${tasks.length}</span>
-        </div>` : ''}
-    </div>
-  </div>`;
+  let html = '<div class="proj-col" data-proj-col="'+p.id+'">';
+
+  // Заголовок колонки
+  html += '<div class="proj-col-header" style="border-top:3px solid '+color+'">';
+  html += '<div class="proj-col-header-main">';
+  html += '<div class="proj-col-name" data-open-proj="'+p.id+'">'+escHtml(p.name)+'</div>';
+  html += '<button class="proj-edit-btn" data-edit-proj="'+p.id+'">···</button>';
+  html += '</div>';
+  if(p.client) html += '<div class="proj-col-client">'+escHtml(p.client)+'</div>';
+  html += '<div class="proj-col-meta">';
+  html += '<span class="proj-stage-badge" style="color:'+color+';border-color:'+color+'33;background:'+color+'11">'+stageLabel+'</span>';
+  if(over) html += '<span class="proj-date over">⚠ '+fmtDateShort(p.end_date)+'</span>';
+  else if(p.end_date) html += '<span class="proj-date">до '+fmtDateShort(p.end_date)+'</span>';
+  html += '</div>';
+  if(total>0) {
+    html += '<div class="proj-progress-row">';
+    html += '<div class="proj-progress-bar"><div class="proj-progress-fill" style="width:'+pct+'%;background:'+color+'"></div></div>';
+    html += '<span class="proj-pct">'+doneTasks.length+'/'+total+'</span>';
+    html += '</div>';
+  }
+  html += '</div>';
+
+  // Задачи
+  html += '<div class="proj-col-tasks">';
+  tasks.slice(0,10).forEach(t => {
+    const taskOver = t.date_due && t.date_due < todayStr();
+    html += '<div class="proj-task-row" data-tid="'+t.id+'">';
+    html += '<div class="task-check" data-id="'+t.id+'"></div>';
+    html += '<div class="proj-task-body">';
+    html += '<div class="proj-task-title">'+escHtml(t.title)+'</div>';
+    if(t.date_due) html += '<div class="proj-task-date'+(taskOver?' over':'')+'">'+fmtDateShort(t.date_due)+'</div>';
+    html += '</div>';
+    const prioDot = t.priority===1?'var(--red)':t.priority===3?'var(--green)':'var(--ochre)';
+    html += '<div style="width:6px;height:6px;border-radius:50%;background:'+prioDot+';flex-shrink:0"></div>';
+    html += '</div>';
+  });
+  if(tasks.length>10) html += '<div class="proj-col-more">+ ещё '+(tasks.length-10)+'</div>';
+  if(doneTasks.length>0) html += '<div class="proj-col-done-cnt">✓ '+doneTasks.length+' выполнено</div>';
+  if(!tasks.length && !doneTasks.length) html += '<div class="kb-empty">нет задач</div>';
+
+  // Кнопка добавить задачу
+  html += '<button class="proj-add-task-btn" data-add-task-proj="'+p.id+'">+ задача</button>';
+  html += '</div>';
+
+  html += '</div>';
+  return html;
 }
 
+function bindProjectsBoard(page) {
+  page.querySelector('#btn-add-proj')?.addEventListener('click',()=>{
+    projectsState.editingProject={color:PROJ_COLORS[0]};renderProjectsPage();
+  });
+  page.querySelector('#btn-add-proj-2')?.addEventListener('click',()=>{
+    projectsState.editingProject={color:PROJ_COLORS[0]};renderProjectsPage();
+  });
+
+  page.querySelectorAll('[data-open-proj]').forEach(el=>{
+    el.addEventListener('click',e=>{
+      e.stopPropagation();
+      projectsState.selectedId=parseInt(el.dataset.openProj);
+      renderProjectsPage();
+    });
+  });
+
+  page.querySelectorAll('[data-edit-proj]').forEach(btn=>{
+    btn.addEventListener('click',e=>{
+      e.stopPropagation();
+      const p=(state.projects||[]).find(x=>x.id===parseInt(btn.dataset.editProj));
+      projectsState.editingProject=p?Object.assign({},p):{color:PROJ_COLORS[0]};
+      renderProjectsPage();
+    });
+  });
+
+  page.querySelectorAll('[data-add-task-proj]').forEach(btn=>{
+    btn.addEventListener('click',e=>{
+      e.stopPropagation();
+      const projId=parseInt(btn.dataset.addTaskProj);
+      openTaskModal(null);
+      setTimeout(()=>{
+        const s=document.getElementById('f-section');
+        if(s){s.value='projects';s.dispatchEvent(new Event('change'));}
+        const pr=document.getElementById('f-project');
+        if(pr) pr.value=String(projId);
+      },50);
+    });
+  });
+
+  page.querySelectorAll('.proj-task-row[data-tid]').forEach(el=>{
+    el.addEventListener('click',e=>{
+      if(e.target.closest('.task-check'))return;
+      openTaskModal(parseInt(el.dataset.tid));
+    });
+  });
+
+  page.querySelectorAll('.proj-col .task-check[data-id]').forEach(el=>{
+    el.addEventListener('click',e=>{
+      e.stopPropagation();
+      toggleTask(parseInt(el.dataset.id)).then(()=>renderProjectsPage());
+    });
+  });
+}
+
+// ── DETAIL VIEW ───────────────────────────────────────────────
 function renderProjectDetail(page) {
-  const p = state.projects.find(x => x.id === projectsState.selectedId);
-  if(!p) { projectsState.selectedId = null; renderProjectsPage(); return; }
+  const p=(state.projects||[]).find(x=>x.id===projectsState.selectedId);
+  if(!p){projectsState.selectedId=null;renderProjectsPage();return;}
 
-  const tasks = state.tasks.filter(t => t.project_id === p.id);
-  const done = tasks.filter(t => t.status === 'done').length;
-  const pct = tasks.length ? Math.round(done/tasks.length*100) : 0;
+  const tasks=(state.tasks||[]).filter(t=>t.project_id===p.id);
+  const done=tasks.filter(t=>t.status==='done').length;
+  const pct=tasks.length?Math.round(done/tasks.length*100):0;
+  const color=p.color||'#a84332';
+  const view=projectsState.taskView;
 
-  page.innerHTML = `
-    <div class="tp-header">
-      <button class="btn-secondary" id="proj-back">← Проекты</button>
-      <div class="proj-detail-name" style="color:${p.color||'var(--brick)'}">${escHtml(p.name)}</div>
-      ${p.client ? `<div class="tp-stats"><span>${escHtml(p.client)}</span></div>` : ''}
-      <button class="btn-add-task" id="btn-add-proj-task">+ ЗАДАЧА</button>
-    </div>
+  let html='<div class="tp-header">';
+  html+='<button class="btn-secondary" id="proj-back" style="font-size:10px">← Проекты</button>';
+  html+='<div class="proj-detail-title" style="color:'+color+'">'+escHtml(p.name)+'</div>';
+  html+='<div class="tp-view-toggle"><button class="tv-btn'+(view==='list'?' active':'')+'" data-pview="list">СПИСОК</button><button class="tv-btn'+(view==='kanban'?' active':'')+'" data-pview="kanban">ЭТАПЫ</button></div>';
+  html+='<button class="btn-secondary" id="btn-edit-this-proj" style="font-size:10px">Редактировать</button>';
+  html+='<button class="btn-add-task" id="btn-add-proj-task">+ ЗАДАЧА</button>';
+  html+='</div>';
 
-    <div class="proj-detail-meta">
-      ${p.end_date ? `<div class="proj-meta-item"><div class="proj-meta-label">Дедлайн</div><div>${fmtDateShort(p.end_date)}</div></div>` : ''}
-      ${p.area ? `<div class="proj-meta-item"><div class="proj-meta-label">Площадь</div><div>${p.area} м²</div></div>` : ''}
-      ${p.budget ? `<div class="proj-meta-item"><div class="proj-meta-label">Бюджет</div><div>${Number(p.budget).toLocaleString('ru')} ₽</div></div>` : ''}
-      ${p.notes ? `<div class="proj-meta-item"><div class="proj-meta-label">Заметки</div><div style="color:var(--ink2)">${escHtml(p.notes)}</div></div>` : ''}
-      <div class="proj-meta-item">
-        <div class="proj-meta-label">Прогресс</div>
-        <div class="proj-progress-row" style="width:200px">
-          <div class="proj-progress-bar"><div class="proj-progress-fill" style="width:${pct}%;background:${p.color||'var(--brick)'}"></div></div>
-          <span class="proj-pct">${done}/${tasks.length}</span>
-        </div>
-      </div>
-    </div>
+  // Info bar
+  html+='<div class="proj-info-bar">';
+  if(p.client) html+='<div class="proj-info-item"><div class="proj-info-label">КЛИЕНТ</div><div>'+escHtml(p.client)+'</div></div>';
+  if(p.type) html+='<div class="proj-info-item"><div class="proj-info-label">ТИП</div><div>'+escHtml(p.type)+'</div></div>';
+  if(p.area) html+='<div class="proj-info-item"><div class="proj-info-label">ПЛОЩАДЬ</div><div>'+p.area+' м²</div></div>';
+  if(p.budget) html+='<div class="proj-info-item"><div class="proj-info-label">БЮДЖЕТ</div><div>'+Number(p.budget).toLocaleString('ru')+' ₽</div></div>';
+  if(p.end_date) html+='<div class="proj-info-item"><div class="proj-info-label">ДЕДЛАЙН</div><div class="'+(p.end_date<todayStr()?'over':'')+'">'+fmtDateShort(p.end_date)+'</div></div>';
+  if(tasks.length) {
+    html+='<div class="proj-info-item"><div class="proj-info-label">ПРОГРЕСС</div>';
+    html+='<div class="proj-progress-row" style="width:130px"><div class="proj-progress-bar"><div class="proj-progress-fill" style="width:'+pct+'%;background:'+color+'"></div></div><span class="proj-pct">'+done+'/'+tasks.length+'</span></div></div>';
+  }
+  // Стадия
+  html+='<div class="proj-info-item"><div class="proj-info-label">СТАДИЯ</div>';
+  html+='<select id="proj-stage-sel" class="tp-sel" style="font-size:10px">';
+  DESIGN_STAGES.forEach(s=>{html+='<option value="'+s.id+'"'+((p.stage||'brief')===s.id?' selected':'')+'>'+s.label+'</option>';});
+  html+='</select></div>';
+  html+='</div>';
 
-    <!-- Канбан по этапам -->
-    <div class="kb-board proj-kanban">
-      ${DESIGN_STAGES.map(stage => {
-        const stageTasks = tasks.filter(t => (t.stage || (t.status==='done'?'done':'brief')) === stage.id);
-        return `<div class="kb-col">
-          <div class="kb-col-header">
-            <div class="kb-col-dot" style="background:${stage.color}"></div>
-            <span class="kb-col-title">${stage.label}</span>
-            <span class="kb-col-cnt">${stageTasks.length}</span>
-          </div>
-          <div class="kb-col-body" data-stage="${stage.id}">
-            ${stageTasks.map(t => `
-              <div class="kb-card ${t.status==='done'?'done':''}" data-tid="${t.id}">
-                <div class="kb-card-bar" style="background:${stage.color}"></div>
-                <div class="kb-card-body">
-                  <div class="task-check ${t.status==='done'?'checked':''}" data-id="${t.id}">${t.status==='done'?'✓':''}</div>
-                  <div class="kb-card-title">${escHtml(t.title)}</div>
-                </div>
-                ${t.date_due ? `<div class="kb-card-footer"><span class="tl-date ${t.date_due<todayStr()&&t.status!=='done'?'over':''}">${fmtDateShort(t.date_due)}</span></div>` : ''}
-              </div>`).join('')}
-            ${!stageTasks.length ? '<div class="kb-empty">пусто</div>' : ''}
-          </div>
-        </div>`;
-      }).join('')}
-    </div>
-    ${buildProjectModal(p)}
-  `;
+  if(p.notes) html+='<div class="proj-notes-block">'+escHtml(p.notes)+'</div>';
 
-  page.querySelector('#proj-back')?.addEventListener('click', () => { projectsState.selectedId = null; renderProjectsPage(); });
-  page.querySelector('#btn-add-proj-task')?.addEventListener('click', () => {
-    // Открываем форму задачи с предустановленным проектом
+  // Tasks
+  if(view==='list') {
+    html+='<div class="proj-task-list">';
+    const active=tasks.filter(t=>t.status!=='done');
+    const doneT=tasks.filter(t=>t.status==='done');
+    active.sort((a,b)=>(a.priority||3)-(b.priority||3));
+    if(active.length) {
+      active.forEach(t=>{html+=buildProjTaskRow(t,color);});
+    }
+    if(doneT.length) {
+      html+='<div class="tl-group-title" style="margin-top:16px">ВЫПОЛНЕНО <span class="tl-count">'+doneT.length+'</span></div>';
+      doneT.forEach(t=>{html+=buildProjTaskRow(t,color);});
+    }
+    if(!tasks.length) html+='<div class="empty-state"><div class="empty-icon">◈</div><div class="empty-text">Нет задач по проекту</div></div>';
+    html+='</div>';
+  } else {
+    // Канбан по этапам
+    html+='<div class="kb-board proj-kanban">';
+    DESIGN_STAGES.forEach(stage=>{
+      const st=tasks.filter(t=>(t.stage||'brief')===stage.id);
+      const sc=stage.id==='done'?'var(--green)':color;
+      html+='<div class="kb-col"><div class="kb-col-header"><div class="kb-col-dot" style="background:'+sc+'"></div><span class="kb-col-title">'+stage.label+'</span><span class="kb-col-cnt">'+st.length+'</span></div>';
+      html+='<div class="kb-col-body" ondragover="event.preventDefault();this.classList.add(\'kb-drag-over\')" ondragleave="this.classList.remove(\'kb-drag-over\')" ondrop="projKbDrop(event,\''+stage.id+'\')">';
+      st.forEach(t=>{
+        const isDone=t.status==='done';
+        html+='<div class="kb-card'+(isDone?' done':'')+'" draggable="true" data-tid="'+t.id+'" ondragstart="projKbDragStart(event,'+t.id+')">';
+        html+='<div class="kb-card-bar" style="background:'+sc+'"></div>';
+        html+='<div class="kb-card-body"><div class="task-check'+(isDone?' checked':'')+'" data-id="'+t.id+'">'+(isDone?'✓':'')+'</div>';
+        html+='<div class="kb-card-title">'+escHtml(t.title)+'</div></div>';
+        if(t.date_due) html+='<div class="kb-card-footer"><span class="tl-date" style="font-size:9px">'+fmtDateShort(t.date_due)+'</span></div>';
+        html+='</div>';
+      });
+      if(!st.length) html+='<div class="kb-empty">пусто</div>';
+      html+='</div></div>';
+    });
+    html+='</div>';
+  }
+
+  if(projectsState.editingProject!==null) html+=buildProjectModal();
+  page.innerHTML=html;
+
+  page.querySelector('#proj-back')?.addEventListener('click',()=>{projectsState.selectedId=null;renderProjectsPage();});
+  page.querySelector('#btn-edit-this-proj')?.addEventListener('click',()=>{projectsState.editingProject=Object.assign({},p);renderProjectsPage();});
+  page.querySelector('#btn-add-proj-task')?.addEventListener('click',()=>{
     openTaskModal(null);
-    setTimeout(() => {
-      const sel = document.getElementById('f-section');
-      if(sel) { sel.value = 'projects'; sel.dispatchEvent(new Event('change')); }
-      const proj = document.getElementById('f-project');
-      if(proj) proj.value = String(p.id);
-    }, 50);
+    setTimeout(()=>{
+      const s=document.getElementById('f-section');
+      if(s){s.value='projects';s.dispatchEvent(new Event('change'));}
+      const pr=document.getElementById('f-project');
+      if(pr) pr.value=String(p.id);
+    },50);
   });
-  page.querySelectorAll('.kb-card[data-tid]').forEach(el => {
-    el.addEventListener('click', e => { if(e.target.closest('.task-check')) return; openTaskModal(parseInt(el.dataset.tid)); });
+  page.querySelectorAll('[data-pview]').forEach(btn=>{
+    btn.addEventListener('click',()=>{projectsState.taskView=btn.dataset.pview;renderProjectsPage();});
   });
-  page.querySelectorAll('.task-check[data-id]').forEach(el => {
-    el.addEventListener('click', e => { e.stopPropagation(); toggleTask(parseInt(el.dataset.id)).then(()=>renderProjectsPage()); });
+  page.querySelector('#proj-stage-sel')?.addEventListener('change',async e=>{
+    await SB.from('projects').update({stage:e.target.value}).eq('id',p.id);
+    p.stage=e.target.value;
   });
-  bindProjectModal(page);
+  page.querySelectorAll('[data-tid]').forEach(el=>{
+    el.addEventListener('click',e=>{if(e.target.closest('.task-check'))return;openTaskModal(parseInt(el.dataset.tid));});
+  });
+  page.querySelectorAll('.task-check[data-id]').forEach(el=>{
+    el.addEventListener('click',e=>{e.stopPropagation();toggleTask(parseInt(el.dataset.id)).then(()=>renderProjectsPage());});
+  });
+  if(projectsState.editingProject!==null) bindProjectModal(page);
 }
 
-function buildProjectModal(proj) {
-  if(projectsState.editingProject === null || projectsState.editingProject === undefined) return '';
-  const p = projectsState.editingProject;
-  const isNew = !p.id;
-  const COLORS = ['#a84332','#534AB7','#185FA5','#1D9E75','#BA7517','#993C1D','#5F5E5A','#0f6e56'];
+function buildProjTaskRow(t, color) {
+  const isDone=t.status==='done';
+  const over=t.date_due&&t.date_due<todayStr()&&!isDone;
+  const subs=state.subtasks[t.id]||[];
+  const subDone=subs.filter(s=>s.done).length;
+  const pct=subs.length?Math.round(subDone/subs.length*100):null;
 
-  return `<div class="modal-overlay" id="proj-modal-ov">
-    <div class="modal">
-      <div class="modal-header">
-        <div class="modal-title">${isNew?'НОВЫЙ ПРОЕКТ':'РЕДАКТИРОВАТЬ ПРОЕКТ'}</div>
-        <button class="modal-close" id="proj-modal-close">✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="mf-row"><input type="text" id="pm-name" class="f-title-input" placeholder="Название проекта..." value="${escHtml(p.name||'')}"></div>
-        <div class="mf-2col">
-          <div class="mf-field"><label class="mf-label">Клиент</label><input type="text" id="pm-client" class="f-input" value="${escHtml(p.client||'')}"></div>
-          <div class="mf-field"><label class="mf-label">Тип</label>
-            <select id="pm-type" class="f-select">
-              ${['HoReCa','Retail','База отдыха','Офис/БЦ','Жильё','Другое'].map(t=>`<option ${p.type===t?'selected':''}>${t}</option>`).join('')}
-            </select>
-          </div>
-        </div>
-        <div class="mf-2col">
-          <div class="mf-field"><label class="mf-label">Площадь (м²)</label><input type="number" id="pm-area" class="f-input" value="${p.area||''}"></div>
-          <div class="mf-field"><label class="mf-label">Бюджет (₽)</label><input type="number" id="pm-budget" class="f-input" value="${p.budget||''}"></div>
-        </div>
-        <div class="mf-2col">
-          <div class="mf-field"><label class="mf-label">Старт</label><input type="date" id="pm-start" class="f-input" value="${p.start_date||''}"></div>
-          <div class="mf-field"><label class="mf-label">Дедлайн</label><input type="date" id="pm-end" class="f-input" value="${p.end_date||''}"></div>
-        </div>
-        <div class="mf-field"><label class="mf-label">Стадия</label>
-          <select id="pm-stage" class="f-select">
-            ${DESIGN_STAGES.map(s=>`<option value="${s.id}" ${(p.stage||'brief')===s.id?'selected':''}>${s.label}</option>`).join('')}
-          </select>
-        </div>
-        <div class="mf-field"><label class="mf-label">Заметки</label><textarea id="pm-notes" class="f-textarea">${escHtml(p.notes||'')}</textarea></div>
-        <div class="mf-field"><label class="mf-label">Цвет</label>
-          <div style="display:flex;gap:6px;flex-wrap:wrap">
-            ${COLORS.map(col=>`<div class="color-swatch ${(p.color||'#a84332')===col?'active':''}" data-color="${col}" style="background:${col}"></div>`).join('')}
-          </div>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <div class="modal-footer-left">${!isNew?`<button class="btn-delete" id="pm-delete">Удалить</button>`:''}</div>
-        <div class="modal-footer-right">
-          <button class="btn-secondary" id="pm-cancel">Отмена</button>
-          <button class="btn-primary" id="pm-save">Сохранить</button>
-        </div>
-      </div>
-    </div>
-  </div>`;
+  let html='<div class="tl-row'+(isDone?' done':'')+(over?' overdue':'')+'" data-tid="'+t.id+'">';
+  html+='<div class="task-check'+(isDone?' checked':'')+'" data-id="'+t.id+'">'+(isDone?'✓':'')+'</div>';
+  html+='<div class="tl-bar" style="background:'+color+'"></div>';
+  html+='<div class="tl-body"><div class="tl-title">'+escHtml(t.title)+'</div>';
+  if(pct!==null) html+='<div class="tl-progress"><div class="tl-progress-fill" style="width:'+pct+'%"></div><span class="tl-pct">'+subDone+'/'+subs.length+'</span></div>';
+  html+='</div>';
+  html+='<div class="tl-meta">';
+  if(t.date_due) html+='<span class="tl-date'+(over?' over':'')+'">'+fmtDateShort(t.date_due)+'</span>';
+  html+='</div></div>';
+  return html;
+}
+
+let _projDragId=null;
+window.projKbDragStart=function(e,id){_projDragId=id;e.dataTransfer.effectAllowed='move';};
+window.projKbDrop=async function(e,stage){
+  e.preventDefault();e.currentTarget.classList.remove('kb-drag-over');
+  if(!_projDragId)return;
+  const task=(state.tasks||[]).find(t=>t.id===_projDragId);
+  if(!task)return;
+  task.stage=stage;
+  if(stage==='done')task.status='done';
+  await SB.from('bb_tasks').update({stage,status:task.status}).eq('id',_projDragId);
+  _projDragId=null;
+  renderProjectsPage();
+};
+
+// ── MODAL ─────────────────────────────────────────────────────
+function buildProjectModal() {
+  const p=projectsState.editingProject;
+  if(p===null||p===undefined)return'';
+  const isNew=!p.id;
+  const color=p.color||PROJ_COLORS[0];
+
+  let html='<div class="modal-overlay" id="proj-modal-ov"><div class="modal">';
+  html+='<div class="modal-header"><div class="modal-title">'+(isNew?'НОВЫЙ ПРОЕКТ':'РЕДАКТИРОВАТЬ')+'</div>';
+  html+='<button class="modal-close" id="proj-modal-close">✕</button></div>';
+  html+='<div class="modal-body">';
+  html+='<div class="mf-row"><input type="text" id="pm-name" class="f-title-input" placeholder="Название..." value="'+escHtml(p.name||'')+'"></div>';
+  html+='<div class="mf-2col">';
+  html+='<div class="mf-field"><label class="mf-label">Клиент</label><input type="text" id="pm-client" class="f-input" value="'+escHtml(p.client||'')+'"></div>';
+  html+='<div class="mf-field"><label class="mf-label">Тип</label><select id="pm-type" class="f-select">';
+  PROJECT_TYPES.forEach(t=>{html+='<option'+(p.type===t?' selected':'')+'>'+t+'</option>';});
+  html+='</select></div></div>';
+  html+='<div class="mf-2col">';
+  html+='<div class="mf-field"><label class="mf-label">Площадь</label><input type="text" id="pm-area" class="f-input" placeholder="120 м²" value="'+(p.area||'')+'"></div>';
+  html+='<div class="mf-field"><label class="mf-label">Бюджет ₽</label><input type="text" id="pm-budget" class="f-input" value="'+(p.budget||'')+'"></div>';
+  html+='</div>';
+  html+='<div class="mf-2col">';
+  html+='<div class="mf-field"><label class="mf-label">Старт</label><input type="date" id="pm-start" class="f-input" value="'+(p.start_date||'')+'"></div>';
+  html+='<div class="mf-field"><label class="mf-label">Дедлайн</label><input type="date" id="pm-end" class="f-input" value="'+(p.end_date||'')+'"></div>';
+  html+='</div>';
+  html+='<div class="mf-field"><label class="mf-label">Стадия</label><select id="pm-stage" class="f-select">';
+  DESIGN_STAGES.forEach(s=>{html+='<option value="'+s.id+'"'+((p.stage||'brief')===s.id?' selected':'')+'>'+s.label+'</option>';});
+  html+='</select></div>';
+  html+='<div class="mf-row"><label class="mf-label">Заметки</label><textarea id="pm-notes" class="f-textarea">'+escHtml(p.notes||'')+'</textarea></div>';
+  html+='<div class="mf-field"><label class="mf-label">Цвет</label><div style="display:flex;gap:6px;flex-wrap:wrap">';
+  PROJ_COLORS.forEach(col=>{html+='<div class="color-swatch'+(color===col?' active':'')+'" data-color="'+col+'" style="background:'+col+'"></div>';});
+  html+='</div></div>';
+  if(!isNew){
+    html+='<div class="mf-field"><label class="mf-label">Статус</label><select id="pm-status" class="f-select">';
+    [['active','Активный'],['done','Завершён'],['archived','Архив']].forEach(([v,l])=>{html+='<option value="'+v+'"'+((p.status||'active')===v?' selected':'')+'>'+l+'</option>';});
+    html+='</select></div>';
+  }
+  html+='</div>';
+  html+='<div class="modal-footer">';
+  html+='<div class="modal-footer-left">'+(isNew?'':`<button class="btn-delete" id="pm-delete">Удалить</button>`)+'</div>';
+  html+='<div class="modal-footer-right"><button class="btn-secondary" id="pm-cancel">Отмена</button><button class="btn-primary" id="pm-save">Сохранить</button></div>';
+  html+='</div></div></div>';
+  return html;
 }
 
 function bindProjectModal(page) {
-  let pickedColor = projectsState.editingProject?.color || '#a84332';
-
-  page.querySelector('#proj-modal-ov')?.addEventListener('click', e => { if(e.target.id==='proj-modal-ov') { projectsState.editingProject=null; renderProjectsPage(); } });
-  page.querySelector('#proj-modal-close')?.addEventListener('click', () => { projectsState.editingProject=null; renderProjectsPage(); });
-  page.querySelector('#pm-cancel')?.addEventListener('click', () => { projectsState.editingProject=null; renderProjectsPage(); });
-
-  page.querySelectorAll('.color-swatch').forEach(sw => {
-    sw.addEventListener('click', () => {
-      pickedColor = sw.dataset.color;
-      page.querySelectorAll('.color-swatch').forEach(s => s.classList.toggle('active', s.dataset.color===pickedColor));
-    });
+  let pickedColor=projectsState.editingProject?.color||PROJ_COLORS[0];
+  page.querySelector('#proj-modal-ov')?.addEventListener('click',e=>{if(e.target.id==='proj-modal-ov'){projectsState.editingProject=null;renderProjectsPage();}});
+  page.querySelector('#proj-modal-close')?.addEventListener('click',()=>{projectsState.editingProject=null;renderProjectsPage();});
+  page.querySelector('#pm-cancel')?.addEventListener('click',()=>{projectsState.editingProject=null;renderProjectsPage();});
+  page.querySelectorAll('[data-color]').forEach(sw=>{
+    sw.addEventListener('click',()=>{pickedColor=sw.dataset.color;page.querySelectorAll('[data-color]').forEach(s=>s.classList.toggle('active',s.dataset.color===pickedColor));});
   });
-
-  page.querySelector('#pm-save')?.addEventListener('click', async () => {
-    const name = document.getElementById('pm-name')?.value.trim();
-    if(!name) { showToast('Введите название','error'); return; }
-    const data = {
-      name, client: document.getElementById('pm-client')?.value||null,
-      type: document.getElementById('pm-type')?.value||null,
-      area: parseFloat(document.getElementById('pm-area')?.value)||null,
-      budget: parseFloat(document.getElementById('pm-budget')?.value)||null,
-      start_date: document.getElementById('pm-start')?.value||null,
-      end_date: document.getElementById('pm-end')?.value||null,
-      stage: document.getElementById('pm-stage')?.value||'brief',
-      notes: document.getElementById('pm-notes')?.value||null,
-      color: pickedColor,
-    };
-    const p = projectsState.editingProject;
-    if(p?.id) {
-      const {error} = await SB.from('projects').update(data).eq('id',p.id);
-      if(error) { console.error('Ошибка обновления проекта:', error); showToast('Ошибка: '+error.message,'error'); return; }
-      const idx=state.projects.findIndex(x=>x.id===p.id);
-      if(idx>=0) Object.assign(state.projects[idx],data);
+  page.querySelector('#pm-save')?.addEventListener('click',async()=>{
+    const name=document.getElementById('pm-name')?.value.trim();
+    if(!name){showToast('Введите название','error');return;}
+    const data={name,client:document.getElementById('pm-client')?.value||null,type:document.getElementById('pm-type')?.value||null,area:document.getElementById('pm-area')?.value||null,budget:document.getElementById('pm-budget')?.value?.replace(/\s/g,'')||null,start_date:document.getElementById('pm-start')?.value||null,end_date:document.getElementById('pm-end')?.value||null,stage:document.getElementById('pm-stage')?.value||'brief',notes:document.getElementById('pm-notes')?.value||null,status:document.getElementById('pm-status')?.value||'active',color:pickedColor};
+    const p=projectsState.editingProject;
+    if(p?.id){
+      const{error}=await SB.from('projects').update(data).eq('id',p.id);
+      if(error){showToast('Ошибка: '+error.message,'error');return;}
+      const idx=(state.projects||[]).findIndex(x=>x.id===p.id);
+      if(idx>=0)Object.assign(state.projects[idx],data);
     } else {
-      const {data:saved,error} = await SB.from('projects').insert(data).select().single();
-      if(error) { console.error('Ошибка создания проекта:', error); showToast('Ошибка: '+error.message,'error'); return; }
-      if(saved) state.projects.push(saved);
+      const{data:saved,error}=await SB.from('projects').insert(data).select().single();
+      if(error){showToast('Ошибка: '+error.message,'error');return;}
+      if(saved){if(!state.projects)state.projects=[];state.projects.push(saved);}
     }
-    projectsState.editingProject = null;
+    projectsState.editingProject=null;
     renderProjectsPage();
     showToast(p?.id?'Проект обновлён':'Проект создан','success');
   });
-
-  page.querySelector('#pm-delete')?.addEventListener('click', async () => {
-    if(!confirm('Удалить проект? Задачи останутся.')) return;
-    const p = projectsState.editingProject;
+  page.querySelector('#pm-delete')?.addEventListener('click',async()=>{
+    if(!confirm('Удалить проект?'))return;
+    const p=projectsState.editingProject;
     await SB.from('projects').delete().eq('id',p.id);
-    state.projects = state.projects.filter(x=>x.id!==p.id);
-    projectsState.editingProject = null;
-    projectsState.selectedId = null;
-    renderProjectsPage();
-    showToast('Проект удалён');
+    state.projects=(state.projects||[]).filter(x=>x.id!==p.id);
+    projectsState.editingProject=null;projectsState.selectedId=null;
+    renderProjectsPage();showToast('Проект удалён');
   });
 }
+
 
 // ─── GANTT PAGE (frappe-gantt) ───────────────────────────────
 let ganttState = {
