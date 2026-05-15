@@ -1,3 +1,9 @@
+// Пользователи системы
+const USERS = [
+  { id:'maria', name:'Мария', avatar:'МА', color:'#a84332', hash:'9b2db879befc26f80abd606a33cdade35c2bd17759d846e7812a41afd7350bfa' },
+  { id:'ilya',  name:'Илья',  avatar:'ИЛ', color:'#534AB7', hash:'5531d8db8ad6585cf0204496f7eb98584fe42a2651766bdb5001248061458c59' },
+];
+
 'use strict'; // v20260512_163052
 
 
