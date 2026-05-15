@@ -82,39 +82,111 @@ function showToast(msg, type='') {
 
 // ─── AUTH ─────────────────────────────────────────────────────
 function initAuth() {
-  if(sessionStorage.getItem('bb-ok') === PW_HASH) {
-    setDemoUser();
-    document.getElementById('auth-screen').classList.add('hidden');
-    document.getElementById('app').classList.remove('hidden');
-    loadDataAndShow();
-    return;
+  // Проверяем сохранённую сессию
+  const savedUserId = sessionStorage.getItem('bb-user-id');
+  const savedHash = sessionStorage.getItem('bb-ok');
+  if(savedUserId && savedHash) {
+    const user = USERS.find(u => u.id === savedUserId && u.hash === savedHash);
+    if(user) {
+      setCurrentUser(user);
+      document.getElementById('auth-screen').classList.add('hidden');
+      document.getElementById('app').classList.remove('hidden');
+      loadDataAndShow();
+      return;
+    }
   }
-  const btn = document.getElementById('auth-submit');
-  const pw = document.getElementById('auth-password');
-  if(btn) btn.addEventListener('click', doAuth);
-  if(pw) pw.addEventListener('keydown', e=>{ if(e.key==='Enter') doAuth(); });
+
+  renderAuthScreen();
   const logout = document.getElementById('btn-logout');
-  if(logout) logout.addEventListener('click', ()=>{ sessionStorage.removeItem('bb-ok'); location.reload(); });
+  if(logout) logout.addEventListener('click', ()=>{
+    sessionStorage.removeItem('bb-ok');
+    sessionStorage.removeItem('bb-user-id');
+    location.reload();
+  });
 }
 
-function setDemoUser() {
-  currentUser = { id: 'demo', email: 'maria@brickburo.com' };
-  currentProfile = { id: 'demo', name: 'Мария', avatar_initials: 'МА', color: '#a84332' };
-  profiles['demo'] = currentProfile;
+function renderAuthScreen() {
+  // Показываем выбор пользователя
+  const authCard = document.querySelector('.auth-card');
+  if(!authCard) return;
+
+  authCard.innerHTML = \`
+    <div class="auth-logo">
+      <span class="auth-logo-brick">BRICK</span><span class="auth-logo-buro">BURO</span>
+      <div class="auth-logo-sub">ШТАБ</div>
+    </div>
+    <div id="auth-error" class="auth-error hidden"></div>
+    <div class="auth-user-select">
+      \${USERS.map(u => \`
+        <button class="auth-user-btn" data-user-id="\${u.id}">
+          <div class="auth-user-avatar" style="background:\${u.color}">\${u.avatar}</div>
+          <span>\${u.name}</span>
+        </button>
+      \`).join('')}
+    </div>
+    <div id="auth-pw-wrap" style="display:none">
+      <div class="auth-selected-user" id="auth-selected-name"></div>
+      <div class="auth-form">
+        <div class="field-wrap">
+          <label class="field-label">Пароль</label>
+          <input type="password" id="auth-password" class="field-input" placeholder="••••••••" autocomplete="current-password" autofocus>
+        </div>
+        <button id="auth-submit" class="btn-primary auth-submit">
+          <span id="auth-btn-text">Войти</span>
+          <span id="auth-btn-spin" class="btn-spinner hidden"></span>
+        </button>
+      </div>
+      <button class="auth-back-btn" id="auth-back">← Назад</button>
+    </div>
+    <div class="auth-hint">Только для команды BrickBuro</div>
+  \`;
+
+  let selectedUserId = null;
+
+  authCard.querySelectorAll('.auth-user-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedUserId = btn.dataset.userId;
+      const user = USERS.find(u => u.id === selectedUserId);
+      document.getElementById('auth-selected-name').textContent = user.name;
+      document.querySelector('.auth-user-select').style.display = 'none';
+      document.getElementById('auth-pw-wrap').style.display = 'block';
+      document.getElementById('auth-password').focus();
+    });
+  });
+
+  authCard.querySelector('#auth-back')?.addEventListener('click', () => {
+    document.querySelector('.auth-user-select').style.display = 'grid';
+    document.getElementById('auth-pw-wrap').style.display = 'none';
+    selectedUserId = null;
+  });
+
+  authCard.querySelector('#auth-submit')?.addEventListener('click', () => doAuth(selectedUserId));
+  authCard.querySelector('#auth-password')?.addEventListener('keydown', e => {
+    if(e.key === 'Enter') doAuth(selectedUserId);
+  });
 }
 
-async function doAuth() {
-  const pw = document.getElementById('auth-password').value;
+function setCurrentUser(user) {
+  currentUser = { id: user.id, email: user.id + '@brickburo.com' };
+  currentProfile = { id: user.id, name: user.name, avatar_initials: user.avatar, color: user.color };
+  profiles[user.id] = currentProfile;
+}
+
+async function doAuth(userId) {
+  const pw = document.getElementById('auth-password')?.value;
   const errEl = document.getElementById('auth-error');
   const btnText = document.getElementById('auth-btn-text');
   const btn = document.getElementById('auth-submit');
   if(!pw) { errEl.textContent='Введите пароль'; errEl.classList.remove('hidden'); return; }
+  if(!userId) { errEl.textContent='Выберите пользователя'; errEl.classList.remove('hidden'); return; }
   errEl.classList.add('hidden');
   btnText.textContent='Вхожу...'; btn.disabled=true;
   const h = await sha256(pw);
-  if(h === PW_HASH) {
-    sessionStorage.setItem('bb-ok', PW_HASH);
-    setDemoUser();
+  const user = USERS.find(u => u.id === userId && u.hash === h);
+  if(user) {
+    sessionStorage.setItem('bb-ok', h);
+    sessionStorage.setItem('bb-user-id', user.id);
+    setCurrentUser(user);
     document.getElementById('auth-screen').classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');
     loadDataAndShow();
