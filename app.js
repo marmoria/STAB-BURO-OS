@@ -108,8 +108,6 @@ function initAuth() {
     sessionStorage.removeItem('bb-user-id');
     location.reload();
   });
-  const reload = document.getElementById('btn-reload');
-  if(reload) reload.addEventListener('click', ()=> reloadData());
 }
 
 function renderAuthScreen() {
@@ -200,46 +198,15 @@ async function doAuth(userId) {
 }
 
 // ─── LOAD DATA ────────────────────────────────────────────────
-async function loadDataAndShow(attempt=1) {
-  const MAX = 4;
-  try {
-    await Promise.all([loadTasks(), loadProjects(), loadGoals()]);
-    const av = document.getElementById('user-avatar');
-    const un = document.getElementById('user-name');
-    if(av) av.textContent = currentProfile?.avatar_initials || '';
-    if(un) un.textContent = currentProfile?.name || '';
-    initCalendar();
-    renderTodayHeader();
-    renderTasks();
-    // Убираем индикатор загрузки если был
-    const ind = document.getElementById('load-indicator');
-    if(ind) ind.remove();
-  } catch(e) {
-    console.error('loadDataAndShow attempt '+attempt, e);
-    if(attempt < MAX) {
-      const delay = attempt * 2000;
-      showLoadIndicator('Нет связи, повтор через ' + (delay/1000) + ' сек...');
-      setTimeout(() => loadDataAndShow(attempt+1), delay);
-    } else {
-      showLoadIndicator('Нет связи с сервером. <a href="#" onclick="location.reload()">Обновить страницу</a>');
-    }
-  }
-}
-
-function showLoadIndicator(msg) {
-  let ind = document.getElementById('load-indicator');
-  if(!ind) {
-    ind = document.createElement('div');
-    ind.id = 'load-indicator';
-    ind.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 20px;border-radius:4px;font-family:var(--font-mono);font-size:12px;z-index:9999;';
-    document.body.appendChild(ind);
-  }
-  ind.innerHTML = msg;
-}
-
-async function reloadData() {
-  showLoadIndicator('Загружаю данные...');
-  await loadDataAndShow();
+async function loadDataAndShow() {
+  await Promise.all([loadTasks(), loadProjects(), loadGoals()]);
+  const av = document.getElementById('user-avatar');
+  const un = document.getElementById('user-name');
+  if(av) av.textContent = currentProfile.avatar_initials;
+  if(un) un.textContent = currentProfile.name;
+  initCalendar();
+  renderTodayHeader();
+  renderTasks();
 }
 
 async function loadTasks() {
@@ -754,6 +721,13 @@ async function toggleTask(id) {
     await SB.from('bb_tasks').update({status:ns}).eq('id',id);
   }
   renderTasks();
+  // Если открыт канбан — перерисовать его тоже
+  const tpContent = document.getElementById('tp-content');
+  if(tpContent && tpContent.querySelector('.kb-board')) {
+    tpContent.innerHTML = buildTasksKanban(getTasksPageFiltered());
+    const page = document.getElementById('page-tasks');
+    if(page) bindKanbanCardClicks(page);
+  }
 }
 
 async function toggleSubtask(subId, taskId) {
@@ -1798,6 +1772,7 @@ function renderTasksPage() {
     page.querySelectorAll('[data-tstatus]').forEach(btn=>btn.addEventListener('click',()=>{tasksState.status=btn.dataset.tstatus;renderTasksPage();}));
     page.querySelectorAll('.tl-row').forEach(el=>el.addEventListener('click',e=>{if(e.target.closest('.task-check'))return;openTaskModal(parseInt(el.dataset.tid));}));
     page.querySelectorAll('.task-check[data-id]').forEach(el=>el.addEventListener('click',e=>{e.stopPropagation();toggleTask(parseInt(el.dataset.id));}));
+    if(tasksState.view==='kanban') bindKanbanCardClicks(page);
   } catch(err) {
     console.error('renderTasksPage:', err);
     page.innerHTML=`<div class="page-stub"><div class="stub-icon">!</div><div class="stub-label">Ошибка: ${err.message}</div></div>`;
